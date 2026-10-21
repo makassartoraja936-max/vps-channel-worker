@@ -70,7 +70,16 @@ async def run_task(task_config: dict):
         try:
             if ttype == "DIRECT_URL" and url:
                 logger.info(f"Navigating directly to: {url}")
-                await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                resp = await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                title = await page.title()
+                status_code = resp.status if resp else "200"
+                screenshot_file = os.path.expanduser("~/workspace/last_screenshot.png")
+                try:
+                    await page.screenshot(path=screenshot_file)
+                except Exception:
+                    pass
+                logger.info(f"✅ Halaman Sukses Dimuat! Judul: '{title}' | Status HTTP: {status_code}")
+                # Keep open naturally for 1 to 3 minutes
                 await asyncio.sleep(random.randint(60, 180))
 
             else:

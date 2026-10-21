@@ -19,10 +19,10 @@ pip3 install --quiet --upgrade --break-system-packages -r "$SCRIPT_DIR/requireme
 pip install --quiet --upgrade --break-system-packages -r "$SCRIPT_DIR/requirements.txt" 2>/dev/null || \
 pip3 install --quiet --upgrade -r "$SCRIPT_DIR/requirements.txt" 2>/dev/null || true
 
-# 2. Install Playwright Chromium with dependencies
+# 2. Install Playwright Chromium browser binary
 echo "🌐 Installing Playwright Chromium browser..."
-python3 -m playwright install --with-deps chromium > /dev/null 2>&1 || \
-python3 -m playwright install chromium > /dev/null 2>&1 || true
+python3 -m playwright install chromium || true
+python3 -m playwright install-deps chromium 2>/dev/null || true
 
 # 3. Create run script for daemon persistence
 echo "⚙️ Creating startup launcher..."
@@ -36,13 +36,14 @@ done
 EOF_LAUNCH
 chmod +x "$SCRIPT_DIR/run.sh"
 
-# 4. Stop existing worker if running
+# 4. Stop existing worker & launcher if running
+pkill -f "run.sh" || true
 pkill -f "worker.py" || true
 sleep 1
 
-# 5. Start worker in background
-echo "🚀 Starting worker.py in background..."
-nohup python3 "$SCRIPT_DIR/worker.py" > "$SCRIPT_DIR/worker.log" 2>&1 &
+# 5. Start worker via run.sh watchdog loop in background
+echo "🚀 Starting worker via run.sh watchdog in background..."
+nohup bash "$SCRIPT_DIR/run.sh" > /dev/null 2>&1 &
 
 echo "=========================================================="
 echo "✅ Worker successfully started in background!"
