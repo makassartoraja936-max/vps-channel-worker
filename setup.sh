@@ -15,7 +15,9 @@ echo "=========================================================="
 
 # 1. Install Python dependencies
 echo "📦 Installing Python packages..."
-pip3 install --quiet --upgrade -r "$SCRIPT_DIR/requirements.txt" || pip install --quiet --upgrade -r "$SCRIPT_DIR/requirements.txt"
+pip3 install --quiet --upgrade --break-system-packages -r "$SCRIPT_DIR/requirements.txt" 2>/dev/null || \
+pip install --quiet --upgrade --break-system-packages -r "$SCRIPT_DIR/requirements.txt" 2>/dev/null || \
+pip3 install --quiet --upgrade -r "$SCRIPT_DIR/requirements.txt" || true
 
 # 2. Install Playwright Chromium with dependencies
 echo "🌐 Installing Playwright Chromium browser..."
