@@ -15,8 +15,39 @@ import logging
 import os
 import random
 import sys
+from urllib.parse import urlparse
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("YouTubeWorker")
+
+
+def get_system_proxy():
+    """Detects and parses system egress proxy (Meta VPS runtime proxy)."""
+    raw_proxy = (
+        os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or
+        os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or
+        os.environ.get("ALL_PROXY") or os.environ.get("all_proxy")
+    )
+    if not raw_proxy:
+        return None
+    try:
+        if "://" not in raw_proxy:
+            raw_proxy = f"http://{raw_proxy}"
+        p = urlparse(raw_proxy)
+        server_str = f"{p.scheme}://{p.hostname}"
+        if p.port:
+            server_str += f":{p.port}"
+        
+        cfg = {"server": server_str}
+        if p.username:
+            cfg["username"] = p.username
+        if p.password:
+            cfg["password"] = p.password
+        logger.info(f"Using runtime egress proxy: {server_str} (Authenticated: {bool(p.username)})")
+        return cfg
+    except Exception as e:
+        logger.warning(f"Failed to parse runtime proxy '{raw_proxy}': {e}")
+        return None
 logger = logging.getLogger("YouTubeWorker")
 
 PROFILE_DIR = os.path.expanduser("~/workspace/browser_profile")
@@ -53,17 +84,24 @@ async def run_task(task_config: dict):
 
     os.makedirs(PROFILE_DIR, exist_ok=True)
 
+    env_proxy = get_system_proxy()
+
     async with async_playwright() as p:
-        browser = await p.chromium.launch_persistent_context(
-            user_data_dir=PROFILE_DIR,
-            headless=True,
-            args=[
+        launch_kwargs = {
+            "user_data_dir": PROFILE_DIR,
+            "headless": True,
+            "ignore_https_errors": True,
+            "args": [
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-blink-features=AutomationControlled",
                 "--mute-audio"
             ]
-        )
+        }
+        if env_proxy:
+            launch_kwargs["proxy"] = env_proxy
+
+        browser = await p.chromium.launch_persistent_context(**launch_kwargs)
 
         page = await browser.new_page()
 
