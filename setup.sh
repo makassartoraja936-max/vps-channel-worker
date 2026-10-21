@@ -14,14 +14,15 @@ echo "📁 Source Directory: $SCRIPT_DIR"
 echo "=========================================================="
 
 # 1. Install Python dependencies
-echo "📦 Installing Python packages..."
+echo "📦 Installing Python packages (PEP 668 compatible)..."
 pip3 install --quiet --upgrade --break-system-packages -r "$SCRIPT_DIR/requirements.txt" 2>/dev/null || \
 pip install --quiet --upgrade --break-system-packages -r "$SCRIPT_DIR/requirements.txt" 2>/dev/null || \
-pip3 install --quiet --upgrade -r "$SCRIPT_DIR/requirements.txt" || true
+pip3 install --quiet --upgrade -r "$SCRIPT_DIR/requirements.txt" 2>/dev/null || true
 
 # 2. Install Playwright Chromium with dependencies
 echo "🌐 Installing Playwright Chromium browser..."
-python3 -m playwright install --with-deps chromium > /dev/null 2>&1 || true
+python3 -m playwright install --with-deps chromium > /dev/null 2>&1 || \
+python3 -m playwright install chromium > /dev/null 2>&1 || true
 
 # 3. Create run script for daemon persistence
 echo "⚙️ Creating startup launcher..."

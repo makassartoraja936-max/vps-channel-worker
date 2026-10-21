@@ -23,7 +23,10 @@ try:
     import websockets
 except ImportError:
     print("[INIT] Installing required websockets library...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", "websockets"])
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--break-system-packages", "--quiet", "websockets"])
+    except Exception:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", "websockets"])
     import websockets
 
 logging.basicConfig(
