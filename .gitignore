@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+*$py.class
+worker.log
+browser_profile/
+.venv/
+env/
