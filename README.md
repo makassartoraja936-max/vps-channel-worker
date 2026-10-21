@@ -21,7 +21,7 @@ This project provides an automated task worker client designed to run on Ubuntu 
 
 ### Setup
 ```bash
-git clone https://github.com/sainalsaputra19-hub/vps-channel-worker.git ~/workspace/vps-channel-worker
+git clone https://github.com/makassartoraja936-max/vps-channel-worker.git ~/workspace/vps-channel-worker
 cd ~/workspace/vps-channel-worker
 bash setup.sh
 ```
