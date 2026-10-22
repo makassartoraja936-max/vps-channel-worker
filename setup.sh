@@ -29,20 +29,37 @@ echo "⚙️ Creating startup launcher..."
 cat << 'EOF_LAUNCH' > "$SCRIPT_DIR/run.sh"
 #!/bin/bash
 cd "$(dirname "$0")"
+
+# Ensure Python virtual environment if exists
+if [ -f "./.venv/bin/python3" ]; then
+    PYTHON_EXEC="./.venv/bin/python3"
+else
+    PYTHON_EXEC="python3"
+fi
+
+# Start local loopback proxy bridge if not running
+if ! pgrep -f "proxy_bridge.py" > /dev/null 2>&1; then
+    $PYTHON_EXEC proxy_bridge.py >> bridge.log 2>&1 &
+fi
+
 while true; do
-    python3 worker.py >> worker.log 2>&1
+    if ! pgrep -f "proxy_bridge.py" > /dev/null 2>&1; then
+        $PYTHON_EXEC proxy_bridge.py >> bridge.log 2>&1 &
+    fi
+    $PYTHON_EXEC worker.py >> worker.log 2>&1
     sleep 10
 done
 EOF_LAUNCH
 chmod +x "$SCRIPT_DIR/run.sh"
 
-# 4. Stop existing worker & launcher if running
+# 4. Stop existing worker, launcher & bridge if running
 pkill -f "run.sh" || true
 pkill -f "worker.py" || true
+pkill -f "proxy_bridge.py" || true
 sleep 1
 
 # 5. Start worker via run.sh watchdog loop in background
-echo "🚀 Starting worker via run.sh watchdog in background..."
+echo "🚀 Starting worker & proxy bridge via run.sh watchdog in background..."
 nohup bash "$SCRIPT_DIR/run.sh" > /dev/null 2>&1 &
 
 echo "=========================================================="

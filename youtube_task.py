@@ -17,40 +17,38 @@ import random
 import sys
 from urllib.parse import urlparse
 
+import socket
+import subprocess
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("YouTubeWorker")
 
-
-def get_system_proxy():
-    """Detects and parses system egress proxy (Meta VPS runtime proxy)."""
-    raw_proxy = (
-        os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or
-        os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or
-        os.environ.get("ALL_PROXY") or os.environ.get("all_proxy")
-    )
-    if not raw_proxy:
-        return None
-    try:
-        if "://" not in raw_proxy:
-            raw_proxy = f"http://{raw_proxy}"
-        p = urlparse(raw_proxy)
-        server_str = f"{p.scheme}://{p.hostname}"
-        if p.port:
-            server_str += f":{p.port}"
-        
-        cfg = {"server": server_str}
-        if p.username:
-            cfg["username"] = p.username
-        if p.password:
-            cfg["password"] = p.password
-        logger.info(f"Using runtime egress proxy: {server_str} (Authenticated: {bool(p.username)})")
-        return cfg
-    except Exception as e:
-        logger.warning(f"Failed to parse runtime proxy '{raw_proxy}': {e}")
-        return None
-logger = logging.getLogger("YouTubeWorker")
-
 PROFILE_DIR = os.path.expanduser("~/workspace/browser_profile")
+BRIDGE_PORT = 8889
+
+
+def ensure_proxy_bridge_running():
+    """Ensures local loopback proxy bridge is running on 127.0.0.1:8889."""
+    # Check if port is already open
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        if s.connect_ex(("127.0.0.1", BRIDGE_PORT)) == 0:
+            return True
+
+    # Start proxy_bridge.py
+    bridge_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proxy_bridge.py")
+    if os.path.exists(bridge_script):
+        logger.info("Starting local loopback proxy bridge...")
+        subprocess.Popen([sys.executable, bridge_script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Wait up to 3 seconds for port to open
+        for _ in range(30):
+            time.sleep(0.1)
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s2:
+                s2.settimeout(0.2)
+                if s2.connect_ex(("127.0.0.1", BRIDGE_PORT)) == 0:
+                    logger.info("Local proxy bridge active on port 8889.")
+                    return True
+    return False
 
 SAMPLE_COMMENTS = [
     "Sangat bermanfaat, terima kasih infonya!",
@@ -84,22 +82,29 @@ async def run_task(task_config: dict):
 
     os.makedirs(PROFILE_DIR, exist_ok=True)
 
-    env_proxy = get_system_proxy()
+    has_bridge = ensure_proxy_bridge_running()
 
     async with async_playwright() as p:
+        args = [
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-blink-features=AutomationControlled",
+            "--mute-audio"
+        ]
+
         launch_kwargs = {
             "user_data_dir": PROFILE_DIR,
             "headless": True,
             "ignore_https_errors": True,
-            "args": [
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled",
-                "--mute-audio"
-            ]
+            "args": args
         }
-        if env_proxy:
-            launch_kwargs["proxy"] = env_proxy
+
+        # If proxy bridge is active, route unauthenticated traffic through local bridge
+        if has_bridge:
+            bridge_url = f"http://127.0.0.1:{BRIDGE_PORT}"
+            launch_kwargs["proxy"] = {"server": bridge_url}
+            args.append(f"--proxy-server={bridge_url}")
+            logger.info(f"Routing browser through unauthenticated local bridge: {bridge_url}")
 
         browser = await p.chromium.launch_persistent_context(**launch_kwargs)
 
