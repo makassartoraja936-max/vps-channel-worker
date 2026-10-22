@@ -217,6 +217,21 @@ async def run_task(task_config: dict):
                     logger.warning(f"Gagal simpan screenshot: {ss_err}")
 
                 logger.info(f"✅ Halaman Sukses Dimuat! Judul: '{title}' | Status HTTP: {status_code}")
+
+                # Save real-time verification log for Dashboard
+                status_file = os.path.expanduser("~/workspace/browser_status.json")
+                try:
+                    with open(status_file, "w") as sf:
+                        json.dump({
+                            "url": url,
+                            "title": title,
+                            "http_status": status_code,
+                            "extensions_loaded": len(ext_paths) if ext_paths else 0,
+                            "time": time.strftime("%Y-%m-%d %H:%M:%S")
+                        }, sf)
+                except Exception as ef:
+                    logger.warning(f"Gagal simpan browser_status: {ef}")
+
                 # Keep open naturally for 1 to 3 minutes
                 await asyncio.sleep(random.randint(60, 180))
 

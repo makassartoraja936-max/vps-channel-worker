@@ -271,9 +271,7 @@ async def run_worker():
                             await ws.send(json.dumps(hb))
                         except Exception as hb_err:
                             logger.warning(f"Heartbeat send failed: {hb_err}")
-                            if not ws.open:
-                                break
-                            await asyncio.sleep(3)
+                            break
 
                 hb_task = asyncio.create_task(heartbeat_loop())
 
@@ -292,12 +290,27 @@ async def run_worker():
 
                         elif mtype == "OPEN_URL":
                             url = msg.get("url", "")
-                            res = handle_browser_visit(url)
+                            handle_browser_visit(url)
+                            # Wait up to 12s to read real-time status from browser_status.json
+                            status_text = f"Browser navigated to {url}"
+                            status_file = os.path.expanduser("~/workspace/browser_status.json")
+                            for _ in range(12):
+                                await asyncio.sleep(1)
+                                if os.path.exists(status_file):
+                                    try:
+                                        with open(status_file, "r") as sf:
+                                            sdata = json.load(sf)
+                                        if sdata.get("url") == url:
+                                            status_text = f"Judul: '{sdata.get('title')}' | HTTP {sdata.get('http_status')} | Ekstensi: {sdata.get('extensions_loaded')} aktif"
+                                            break
+                                    except Exception:
+                                        pass
+
                             await ws.send(json.dumps({
                                 "type": "TASK_DONE",
                                 "agent_id": worker_id,
                                 "task": "OPEN_URL",
-                                "detail": res
+                                "detail": status_text
                             }))
 
                         elif mtype == "YOUTUBE_CAMPAIGN":
