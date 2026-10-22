@@ -31,7 +31,8 @@ except ImportError:
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger("ChannelWorker")
 
@@ -238,7 +239,13 @@ async def run_worker():
     while True:
         try:
             logger.info(f"Connecting to Hub: {hub_url}...")
-            async with websockets.connect(hub_url, ping_interval=20, ping_timeout=20) as ws:
+            async with websockets.connect(
+                hub_url,
+                ping_interval=20,
+                ping_timeout=20,
+                open_timeout=15,
+                close_timeout=10
+            ) as ws:
                 logger.info("Connected to Hub successfully!")
 
                 # Send initial greeting
@@ -251,7 +258,7 @@ async def run_worker():
                 }
                 await ws.send(json.dumps(greeting))
 
-                # Background heartbeat task
+                # Background heartbeat task (resilient keepalive loop)
                 async def heartbeat_loop():
                     while True:
                         await asyncio.sleep(15)
@@ -262,8 +269,11 @@ async def run_worker():
                                 **get_system_metrics()
                             }
                             await ws.send(json.dumps(hb))
-                        except Exception:
-                            break
+                        except Exception as hb_err:
+                            logger.warning(f"Heartbeat send failed: {hb_err}")
+                            if not ws.open:
+                                break
+                            await asyncio.sleep(3)
 
                 hb_task = asyncio.create_task(heartbeat_loop())
 
@@ -340,8 +350,10 @@ async def run_worker():
                 hb_task.cancel()
 
         except Exception as conn_err:
-            logger.warning(f"Connection lost ({conn_err}). Reconnecting in 15s...")
-            await asyncio.sleep(15)
+            logger.warning(f"Connection lost/failed ({type(conn_err).__name__}: {conn_err}). Reconnecting in 5s...")
+            sys.stdout.flush()
+            sys.stderr.flush()
+            await asyncio.sleep(5)
 
 
 if __name__ == "__main__":

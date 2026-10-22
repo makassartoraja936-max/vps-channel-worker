@@ -30,6 +30,9 @@ cat << 'EOF_LAUNCH' > "$SCRIPT_DIR/run.sh"
 #!/bin/bash
 cd "$(dirname "$0")"
 
+# Ensure unbuffered Python output for real-time logs
+export PYTHONUNBUFFERED=1
+
 # Ensure Python virtual environment if exists
 if [ -f "./.venv/bin/python3" ]; then
     PYTHON_EXEC="./.venv/bin/python3"
@@ -39,26 +42,38 @@ fi
 
 # Start local loopback proxy bridge if not running
 if ! pgrep -f "proxy_bridge.py" > /dev/null 2>&1; then
-    $PYTHON_EXEC proxy_bridge.py >> bridge.log 2>&1 &
+    $PYTHON_EXEC -u proxy_bridge.py >> bridge.log 2>&1 &
 fi
 
 while true; do
     if ! pgrep -f "proxy_bridge.py" > /dev/null 2>&1; then
-        $PYTHON_EXEC proxy_bridge.py >> bridge.log 2>&1 &
+        $PYTHON_EXEC -u proxy_bridge.py >> bridge.log 2>&1 &
     fi
-    $PYTHON_EXEC worker.py >> worker.log 2>&1
-    sleep 10
+    $PYTHON_EXEC -u worker.py >> worker.log 2>&1
+    sleep 5
 done
 EOF_LAUNCH
 chmod +x "$SCRIPT_DIR/run.sh"
 
-# 4. Stop existing worker, launcher & bridge if running
+# 4. Configure reboot persistence (crontab & ~/.bashrc fallback)
+echo "🛡️ Installing boot persistence hooks..."
+(crontab -l 2>/dev/null | grep -v "run.sh" ; echo "@reboot cd $SCRIPT_DIR && PYTHONUNBUFFERED=1 bash run.sh >> watchdog_boot.log 2>&1") | crontab - 2>/dev/null || true
+
+if [ -f "$HOME/.bashrc" ] && ! grep -q "$SCRIPT_DIR/run.sh" "$HOME/.bashrc" 2>/dev/null; then
+    echo "if ! pgrep -f \"run.sh\" > /dev/null 2>&1; then cd \"$SCRIPT_DIR\" 2>/dev/null && nohup bash run.sh > /dev/null 2>&1 & fi" >> "$HOME/.bashrc"
+fi
+
+if command -v muse-scheduler >/dev/null 2>&1; then
+    muse-scheduler add "cd $SCRIPT_DIR && bash run.sh" 2>/dev/null || true
+fi
+
+# 5. Stop existing worker, launcher & bridge if running
 pkill -f "run.sh" || true
 pkill -f "worker.py" || true
 pkill -f "proxy_bridge.py" || true
 sleep 1
 
-# 5. Start worker via run.sh watchdog loop in background
+# 6. Start worker via run.sh watchdog loop in background
 echo "🚀 Starting worker & proxy bridge via run.sh watchdog in background..."
 nohup bash "$SCRIPT_DIR/run.sh" > /dev/null 2>&1 &
 
