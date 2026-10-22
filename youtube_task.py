@@ -89,7 +89,15 @@ async def run_task(task_config: dict):
             "--no-sandbox",
             "--disable-dev-shm-usage",
             "--disable-blink-features=AutomationControlled",
-            "--mute-audio"
+            "--mute-audio",
+            "--disable-gpu",
+            "--disable-software-rasterizer",
+            "--renderer-process-limit=2",
+            "--js-flags=--max-old-space-size=256",
+            "--disable-background-networking",
+            "--disable-default-apps",
+            "--disable-sync",
+            "--no-first-run"
         ]
 
         launch_kwargs = {
