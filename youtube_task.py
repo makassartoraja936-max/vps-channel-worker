@@ -163,14 +163,29 @@ async def run_task(task_config: dict):
         try:
             if ttype == "DIRECT_URL" and url:
                 logger.info(f"Navigating directly to: {url}")
-                resp = await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                title = await page.title()
-                status_code = resp.status if resp else "200"
-                screenshot_file = os.path.expanduser("~/workspace/last_screenshot.png")
+                status_code = "200"
                 try:
-                    await page.screenshot(path=screenshot_file)
+                    resp = await page.goto(url, wait_until="load", timeout=45000)
+                    if resp:
+                        status_code = str(resp.status)
+                except Exception as nav_err:
+                    logger.warning(f"Navigation notice (continuing to render): {nav_err}")
+
+                # Give Single Page Apps (React/Vue/AWS) time to download JS bundle and render UI
+                try:
+                    await page.wait_for_selector('input, button, form, [role="main"], h1', timeout=6000)
                 except Exception:
                     pass
+                await asyncio.sleep(4)
+
+                title = await page.title()
+                screenshot_file = os.path.expanduser("~/workspace/last_screenshot.png")
+                try:
+                    await page.screenshot(path=screenshot_file, full_page=False)
+                    logger.info(f"📸 Tangkapan layar tersimpan di {screenshot_file}")
+                except Exception as ss_err:
+                    logger.warning(f"Gagal simpan screenshot: {ss_err}")
+
                 logger.info(f"✅ Halaman Sukses Dimuat! Judul: '{title}' | Status HTTP: {status_code}")
                 # Keep open naturally for 1 to 3 minutes
                 await asyncio.sleep(random.randint(60, 180))
