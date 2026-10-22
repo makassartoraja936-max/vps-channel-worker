@@ -27,6 +27,25 @@ PROFILE_DIR = os.path.expanduser("~/workspace/browser_profile")
 BRIDGE_PORT = 8889
 
 
+def get_installed_extension_paths():
+    """Scans user profile directory for installed unpacked extensions."""
+    ext_base = os.path.join(PROFILE_DIR, "Default", "Extensions")
+    if not os.path.exists(ext_base):
+        return []
+    paths = []
+    try:
+        for ext_id in os.listdir(ext_base):
+            ext_folder = os.path.join(ext_base, ext_id)
+            if os.path.isdir(ext_folder):
+                for v in os.listdir(ext_folder):
+                    v_path = os.path.join(ext_folder, v)
+                    if os.path.isdir(v_path) and os.path.exists(os.path.join(v_path, "manifest.json")):
+                        paths.append(v_path)
+    except Exception as e:
+        logger.warning(f"Error scanning extensions: {e}")
+    return paths
+
+
 def ensure_proxy_bridge_running():
     """Ensures local loopback proxy bridge is running on 127.0.0.1:8889."""
     # Check if port is already open
@@ -132,6 +151,14 @@ async def run_task(task_config: dict):
             "extra_http_headers": standard_headers,
             "args": args
         }
+
+        # Load all installed extensions into Chromium
+        ext_paths = get_installed_extension_paths()
+        if ext_paths:
+            ext_arg = ",".join(ext_paths)
+            args.append(f"--disable-extensions-except={ext_arg}")
+            args.append(f"--load-extension={ext_arg}")
+            logger.info(f"Loaded {len(ext_paths)} extensions into Chromium: {[os.path.basename(os.path.dirname(p)) for p in ext_paths]}")
 
         # If proxy bridge is active, route unauthenticated traffic through local bridge
         if has_bridge:
