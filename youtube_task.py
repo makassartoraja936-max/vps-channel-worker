@@ -100,10 +100,33 @@ async def run_task(task_config: dict):
             "--no-first-run"
         ]
 
+        # Realistic Human Desktop Chrome User-Agent & Headers (Bypasses AWS CloudFront 403)
+        human_user_agent = (
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/128.0.0.0 Safari/537.36"
+        )
+        standard_headers = {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Sec-Ch-Ua": '"Chromium";v="128", "Not;A=Brand";v="24", "Google Chrome";v="128"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Linux"',
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Upgrade-Insecure-Requests": "1"
+        }
+
         launch_kwargs = {
             "user_data_dir": PROFILE_DIR,
             "headless": True,
             "ignore_https_errors": True,
+            "user_agent": human_user_agent,
+            "viewport": {"width": 1366, "height": 768},
+            "locale": "en-US",
+            "timezone_id": "UTC",
+            "extra_http_headers": standard_headers,
             "args": args
         }
 
@@ -116,7 +139,26 @@ async def run_task(task_config: dict):
 
         browser = await p.chromium.launch_persistent_context(**launch_kwargs)
 
-        page = await browser.new_page()
+        # Anti-Detection Stealth Script (Deletes navigator.webdriver & fakes plugins)
+        await browser.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+            window.chrome = {
+                runtime: {},
+                loadTimes: function() {},
+                csi: function() {},
+                app: {}
+            };
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => [1, 2, 3, 4, 5]
+            });
+            Object.defineProperty(navigator, 'languages', {
+                get: () => ['en-US', 'en']
+            });
+        """)
+
+        page = browser.pages[0] if browser.pages else await browser.new_page()
 
         try:
             if ttype == "DIRECT_URL" and url:
