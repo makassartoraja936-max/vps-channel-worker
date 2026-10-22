@@ -87,6 +87,31 @@ def get_hub_url() -> str:
     return DEFAULT_HUB_URL
 
 
+_prev_cpu_total = 0
+_prev_cpu_idle = 0
+
+def read_cpu_percent() -> float:
+    """Calculates CPU usage percentage from /proc/stat."""
+    global _prev_cpu_total, _prev_cpu_idle
+    try:
+        with open("/proc/stat", "r") as f:
+            fields = [float(x) for x in f.readline().strip().split()[1:8]]
+            idle = fields[3] + fields[4]
+            total = sum(fields)
+
+            diff_idle = idle - _prev_cpu_idle
+            diff_total = total - _prev_cpu_total
+            _prev_cpu_idle = idle
+            _prev_cpu_total = total
+
+            if diff_total <= 0:
+                return 0.0
+            pct = 100.0 * (1.0 - (diff_idle / diff_total))
+            return round(max(0.0, min(100.0, pct)), 1)
+    except Exception:
+        return 0.0
+
+
 def get_system_metrics() -> dict:
     """Collects safe hardware and operating system metrics."""
     mem_total, mem_avail = 0, 0
@@ -97,15 +122,29 @@ def get_system_metrics() -> dict:
                     mem_total = int(line.split()[1]) // 1024
                 elif "MemAvailable:" in line:
                     mem_avail = int(line.split()[1]) // 1024
+                elif "MemFree:" in line and mem_avail == 0:
+                    mem_avail = int(line.split()[1]) // 1024
     except Exception:
         pass
 
     uptime_s = 0
+    uptime_str = "-"
     try:
         with open("/proc/uptime", "r") as f:
             uptime_s = int(float(f.readline().split()[0]))
+            days = uptime_s // 86400
+            hours = (uptime_s % 86400) // 3600
+            mins = (uptime_s % 3600) // 60
+            if days > 0:
+                uptime_str = f"{days}d {hours}h {mins}m"
+            elif hours > 0:
+                uptime_str = f"{hours}h {mins}m"
+            else:
+                uptime_str = f"{mins}m"
     except Exception:
         pass
+
+    cpu_pct = read_cpu_percent()
 
     service_active = False
     try:
@@ -115,8 +154,11 @@ def get_system_metrics() -> dict:
         pass
 
     return {
+        "mem_free_mb": mem_avail,
         "ram_total_mb": mem_total,
         "ram_used_mb": max(0, mem_total - mem_avail),
+        "cpu_pct": cpu_pct,
+        "uptime": uptime_str,
         "uptime_s": uptime_s,
         "mining_active": service_active,
         "hostname": socket.gethostname()
