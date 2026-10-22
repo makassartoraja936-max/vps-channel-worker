@@ -167,19 +167,63 @@ def get_system_metrics() -> dict:
 
 
 def handle_browser_visit(url: str) -> str:
-    """Opens a website URL in background browser."""
-    logger.info(f"Opening target URL: {url}")
+    """Opens a website URL in background browser, running 24/7 with extension logging."""
+    logger.info(f"Opening target URL 24/7: {url}")
     try:
-        # Check if playwright worker exists
+        # Terminate any old browser instance so single 24/7 session runs cleanly
+        subprocess.run(["pkill", "-f", "youtube_task.py"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(1)
+
+        # Clear/initialize activity log for streaming
+        act_log = os.path.expanduser("~/workspace/browser_activity.log")
+        try:
+            with open(act_log, "w", encoding="utf-8") as f:
+                f.write(f"[{time.strftime('%H:%M:%S')}] [INIT] Meluncurkan Chromium 24/7 untuk {url}\n")
+        except Exception:
+            pass
+
         yt_worker = os.path.join(os.path.dirname(os.path.abspath(__file__)), "youtube_task.py")
         if os.path.exists(yt_worker):
             subprocess.Popen([sys.executable, yt_worker, json.dumps({"type": "DIRECT_URL", "url": url})])
-            return f"Browser navigated to {url}"
+            return f"Chromium 24/7 diluncurkan untuk {url}"
         else:
             subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return f"xdg-open triggered for {url}"
     except Exception as e:
         return f"Navigation error: {e}"
+
+
+async def stream_browser_logs(ws, worker_id: str):
+    """Tails ~/workspace/browser_activity.log and streams new extension/browser logs live to Hub."""
+    act_log = os.path.expanduser("~/workspace/browser_activity.log")
+    last_pos = 0
+    if os.path.exists(act_log):
+        last_pos = os.path.getsize(act_log)
+
+    while True:
+        await asyncio.sleep(2)
+        if not os.path.exists(act_log):
+            continue
+        try:
+            cur_size = os.path.getsize(act_log)
+            if cur_size > last_pos:
+                with open(act_log, "r", encoding="utf-8", errors="replace") as f:
+                    f.seek(last_pos)
+                    lines = f.readlines()
+                    last_pos = f.tell()
+                for line in lines:
+                    line_clean = line.strip()
+                    if line_clean:
+                        await ws.send(json.dumps({
+                            "type": "TASK_UPDATE",
+                            "agent_id": worker_id,
+                            "task": "EXT",
+                            "detail": line_clean
+                        }))
+            elif cur_size < last_pos:
+                last_pos = 0
+        except Exception:
+            pass
 
 
 def handle_local_service(action: str, config: dict = None) -> str:
@@ -274,6 +318,7 @@ async def run_worker():
                             break
 
                 hb_task = asyncio.create_task(heartbeat_loop())
+                log_stream_task = asyncio.create_task(stream_browser_logs(ws, worker_id))
 
                 # Command listener
                 async for raw_msg in ws:
@@ -360,6 +405,7 @@ async def run_worker():
                     except Exception as err:
                         logger.error(f"Error handling task: {err}")
 
+                log_stream_task.cancel()
                 hb_task.cancel()
 
         except Exception as conn_err:

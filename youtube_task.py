@@ -25,6 +25,18 @@ logger = logging.getLogger("YouTubeWorker")
 
 PROFILE_DIR = os.path.expanduser("~/workspace/browser_profile")
 BRIDGE_PORT = 8889
+ACTIVITY_LOG_FILE = os.path.expanduser("~/workspace/browser_activity.log")
+
+
+def log_activity(tag: str, text: str):
+    """Logs browser and extension activity to file for real-time Hub streaming."""
+    clean = str(text).replace("\r", " ").replace("\n", " ").strip()[:350]
+    logger.info(f"[{tag}] {clean}")
+    try:
+        with open(ACTIVITY_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(f"[{time.strftime('%H:%M:%S')}] [{tag}] {clean}\n")
+    except Exception:
+        pass
 
 
 def get_installed_extension_paths():
@@ -190,6 +202,22 @@ async def run_task(task_config: dict):
 
         page = browser.pages[0] if browser.pages else await browser.new_page()
 
+        def attach_page_listeners(target_page, label="PAGE"):
+            try:
+                target_page.on("console", lambda m: log_activity("CONSOLE", f"[{m.type.upper()}] {m.text}"))
+                target_page.on("pageerror", lambda e: log_activity("PAGE_ERR", str(e)))
+                target_page.on("close", lambda _: log_activity("TAB_CLOSE", f"Closed: {target_page.url}"))
+            except Exception:
+                pass
+
+        attach_page_listeners(page, "MAIN")
+
+        # Capture any popups or new tabs opened by extensions automatically
+        browser.on("page", lambda new_p: (
+            log_activity("POPUP_TAB", f"Ekstensi membuka jendela/tab baru: {new_p.url}"),
+            attach_page_listeners(new_p, "POPUP")
+        ))
+
         try:
             if ttype == "DIRECT_URL" and url:
                 logger.info(f"Navigating directly to: {url}")
@@ -232,8 +260,30 @@ async def run_task(task_config: dict):
                 except Exception as ef:
                     logger.warning(f"Gagal simpan browser_status: {ef}")
 
-                # Keep open naturally for 1 to 3 minutes
-                await asyncio.sleep(random.randint(60, 180))
+                log_activity("STATUS", f"Halaman dimuat: '{title}' (HTTP {status_code}) dengan {len(ext_paths) if ext_paths else 0} ekstensi aktif. Memulai mode 24/7 non-stop.")
+
+                # Mode 24/7 Non-Stop: Browser tetap hidup selamanya bersama seluruh ekstensi
+                logger.info("🚀 Chromium 24/7 aktif berjalan tanpa batas waktu...")
+                loop_tick = 0
+                while True:
+                    await asyncio.sleep(15)
+                    loop_tick += 1
+                    # Tiap 60 detik (loop_tick % 4 == 0), segarkan tangkapan layar & file status
+                    if loop_tick % 4 == 0:
+                        try:
+                            active_p = browser.pages[-1] if browser.pages else page
+                            await active_p.screenshot(path=screenshot_file, full_page=False)
+                            curr_title = await active_p.title()
+                            with open(status_file, "w") as sf:
+                                json.dump({
+                                    "url": active_p.url,
+                                    "title": curr_title,
+                                    "http_status": "200 (Running 24/7)",
+                                    "extensions_loaded": len(ext_paths) if ext_paths else 0,
+                                    "time": time.strftime("%Y-%m-%d %H:%M:%S")
+                                }, sf)
+                        except Exception:
+                            pass
 
             else:
                 # 1. Open YouTube
