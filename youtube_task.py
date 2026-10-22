@@ -94,10 +94,13 @@ async def run_task(task_config: dict):
             "--disable-software-rasterizer",
             "--renderer-process-limit=2",
             "--js-flags=--max-old-space-size=256",
-            "--disable-background-networking",
             "--disable-default-apps",
             "--disable-sync",
-            "--no-first-run"
+            "--no-first-run",
+            # Cloudflare Fast DNS over HTTPS (1.1.1.1) to eliminate DNS resolution timeouts
+            "--enable-features=DnsOverHttps",
+            "--dns-over-https-mode=automatic",
+            "--dns-over-https-templates=https://1.1.1.1/dns-query"
         ]
 
         # Realistic Human Desktop Chrome User-Agent & Headers (Bypasses AWS CloudFront 403)
