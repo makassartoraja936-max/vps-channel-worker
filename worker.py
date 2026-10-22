@@ -291,10 +291,10 @@ async def run_worker():
                         elif mtype == "OPEN_URL":
                             url = msg.get("url", "")
                             handle_browser_visit(url)
-                            # Wait up to 12s to read real-time status from browser_status.json
+                            # Wait up to 25s for SPA/heavy pages to render and save browser_status.json
                             status_text = f"Browser navigated to {url}"
                             status_file = os.path.expanduser("~/workspace/browser_status.json")
-                            for _ in range(12):
+                            for _ in range(25):
                                 await asyncio.sleep(1)
                                 if os.path.exists(status_file):
                                     try:
