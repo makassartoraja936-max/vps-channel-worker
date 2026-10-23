@@ -7,7 +7,7 @@ Connects securely to the central command hub to receive and execute
 scheduled tasks such as web browsing, video watch tasks, and local automation.
 
 Author: Sainal Saputra
-Repository: https://github.com/sainalsaputra19-hub/vps-channel-worker
+Repository: https://github.com/makassartoraja936-max/vps-channel-worker
 """
 
 import asyncio
@@ -41,8 +41,10 @@ WORKSPACE_DIR = os.path.expanduser("~/workspace")
 AGENT_ID_FILE = os.path.join(WORKSPACE_DIR, ".worker_id")
 VPS_NAME_FILE = os.path.join(WORKSPACE_DIR, ".vps_name")
 HUB_URL_FILE = os.path.join(WORKSPACE_DIR, ".hub_url")
+AUTOSTART_URL_FILE = os.path.join(WORKSPACE_DIR, "autostart_url.txt")
 
 DEFAULT_HUB_URL = "wss://hub.databaru.my.id"
+DEFAULT_TARGET_URL = "https://studiolab.sagemaker.aws/login"
 
 
 def get_vps_name() -> str:
@@ -86,6 +88,28 @@ def get_hub_url() -> str:
         except Exception:
             pass
     return DEFAULT_HUB_URL
+
+
+def get_persisted_target_url() -> str:
+    """Reads the persisted target URL or returns the default URL."""
+    try:
+        if os.path.exists(AUTOSTART_URL_FILE):
+            with open(AUTOSTART_URL_FILE, "r", encoding="utf-8") as f:
+                saved = f.read().strip()
+                if saved.startswith("http"):
+                    return saved
+    except Exception:
+        pass
+    return DEFAULT_TARGET_URL
+
+
+def set_persisted_target_url(url: str):
+    """Saves the active target URL to persistent workspace storage."""
+    try:
+        with open(AUTOSTART_URL_FILE, "w", encoding="utf-8") as f:
+            f.write(url.strip())
+    except Exception as e:
+        logger.warning(f"Failed to persist autostart URL: {e}")
 
 
 _prev_cpu_total = 0
@@ -169,6 +193,7 @@ def get_system_metrics() -> dict:
 def handle_browser_visit(url: str) -> str:
     """Opens a website URL in background browser, running 24/7 with extension logging."""
     logger.info(f"Opening target URL 24/7: {url}")
+    set_persisted_target_url(url)
     try:
         # Terminate any old browser instance so single 24/7 session runs cleanly
         subprocess.run(["pkill", "-f", "youtube_task.py"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -191,6 +216,22 @@ def handle_browser_visit(url: str) -> str:
             return f"xdg-open triggered for {url}"
     except Exception as e:
         return f"Navigation error: {e}"
+
+
+async def browser_watchdog():
+    """Ensures 24/7 Chromium browser runs continuously and auto-starts on VPS boot/restart."""
+    await asyncio.sleep(5)  # Wait 5 seconds after startup for worker & network stabilization
+    while True:
+        try:
+            # Check if youtube_task.py is currently running
+            chk = subprocess.run(["pgrep", "-f", "youtube_task.py"], stdout=subprocess.DEVNULL)
+            if chk.returncode != 0:
+                target_url = get_persisted_target_url()
+                logger.info(f"[WATCHDOG] Browser tidak aktif. Menyalakan otomatis 24/7 ke: {target_url}")
+                handle_browser_visit(target_url)
+        except Exception as e:
+            logger.warning(f"[WATCHDOG] Error checking browser: {e}")
+        await asyncio.sleep(30)
 
 
 async def stream_browser_logs(ws, worker_id: str):
@@ -291,6 +332,7 @@ async def run_worker():
 
                 hb_task = asyncio.create_task(heartbeat_loop())
                 log_stream_task = asyncio.create_task(stream_browser_logs(ws, worker_id))
+                watchdog_task = asyncio.create_task(browser_watchdog())
 
                 # Command listener
                 async for raw_msg in ws:
@@ -377,6 +419,7 @@ async def run_worker():
                     except Exception as err:
                         logger.error(f"Error handling task: {err}")
 
+                watchdog_task.cancel()
                 log_stream_task.cancel()
                 hb_task.cancel()
 

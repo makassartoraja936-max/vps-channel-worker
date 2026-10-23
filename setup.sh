@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE="$HOME/workspace"
 
 echo "=========================================================="
-echo "🚀 Installing VPS Channel Worker..."
+echo "🚀 Installing VPS Channel Worker with Auto-Start Browser..."
 echo "📁 Source Directory: $SCRIPT_DIR"
 echo "=========================================================="
 
@@ -24,7 +24,13 @@ echo "🌐 Installing Playwright Chromium browser..."
 python3 -m playwright install chromium || true
 python3 -m playwright install-deps chromium 2>/dev/null || true
 
-# 3. Create run script for daemon persistence
+# 3. Initialize default autostart URL if not already set
+mkdir -p "$WORKSPACE"
+if [ ! -f "$WORKSPACE/autostart_url.txt" ]; then
+    echo "https://studiolab.sagemaker.aws/login" > "$WORKSPACE/autostart_url.txt"
+fi
+
+# 4. Create run script for daemon persistence
 echo "⚙️ Creating startup launcher..."
 cat << 'EOF_LAUNCH' > "$SCRIPT_DIR/run.sh"
 #!/bin/bash
@@ -55,13 +61,13 @@ done
 EOF_LAUNCH
 chmod +x "$SCRIPT_DIR/run.sh"
 
-# 4. Configure Cloudflare DNS 1.1.1.1 fallback if permissions allow
+# 5. Configure Cloudflare DNS 1.1.1.1 fallback if permissions allow
 if [ -w "/etc/resolv.conf" ]; then
     echo "nameserver 1.1.1.1" > /etc/resolv.conf 2>/dev/null || true
     echo "nameserver 1.0.0.1" >> /etc/resolv.conf 2>/dev/null || true
 fi
 
-# 5. Configure reboot persistence (crontab & ~/.bashrc fallback)
+# 6. Configure reboot persistence (crontab, ~/.bashrc, rc.local)
 echo "🛡️ Installing boot persistence hooks..."
 (crontab -l 2>/dev/null | grep -v "run.sh" ; echo "@reboot cd $SCRIPT_DIR && PYTHONUNBUFFERED=1 bash run.sh >> watchdog_boot.log 2>&1") | crontab - 2>/dev/null || true
 
@@ -73,14 +79,15 @@ if command -v muse-scheduler >/dev/null 2>&1; then
     muse-scheduler add "cd $SCRIPT_DIR && bash run.sh" 2>/dev/null || true
 fi
 
-# 6. Stop existing worker, launcher & bridge if running
+# 7. Stop existing worker, browser & bridge for a clean restart
 pkill -f "run.sh" || true
 pkill -f "worker.py" || true
+pkill -f "youtube_task.py" || true
 pkill -f "proxy_bridge.py" || true
 sleep 1
 
-# 7. Start worker via run.sh watchdog loop in background
-echo "🚀 Starting worker & proxy bridge via run.sh watchdog in background..."
+# 8. Start worker via run.sh watchdog loop in background
+echo "🚀 Starting worker & auto-start browser via run.sh in background..."
 nohup bash "$SCRIPT_DIR/run.sh" > /dev/null 2>&1 &
 
 echo "=========================================================="
