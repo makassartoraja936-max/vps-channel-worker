@@ -260,13 +260,17 @@ async def run_task(task_config: dict):
             if ttype == "DIRECT_URL" and url:
                 logger.info(f"Navigating directly to: {url}")
                 status_code = "200"
-                try:
-                    resp = await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                    if resp:
-                        status_code = str(resp.status)
-                except Exception as nav_err:
-                    logger.warning(f"Navigation notice (continuing to render): {nav_err}")
-                    log_activity("NAV_NOTICE", f"{url} -> {str(nav_err)[:150]}")
+                for nav_try in range(3):
+                    try:
+                        resp = await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                        if resp:
+                            status_code = str(resp.status)
+                        break
+                    except Exception as nav_err:
+                        logger.warning(f"Navigation notice attempt {nav_try + 1}: {nav_err}")
+                        log_activity("NAV_NOTICE", f"Percobaan {nav_try + 1} gagal ({str(nav_err)[:100]}), mencoba lagi...")
+                        if nav_try < 2:
+                            await asyncio.sleep(3)
 
                 # Give Single Page Apps (React/Vue/AWS Cognito) time to download JS bundle and render UI
                 try:
@@ -312,25 +316,31 @@ async def run_task(task_config: dict):
                 logger.info("🚀 Chromium 24/7 aktif berjalan tanpa batas waktu...")
                 loop_tick = 0
                 while True:
-                    await asyncio.sleep(15)
+                    await asyncio.sleep(5)
                     loop_tick += 1
-                    # Tiap 30 detik (loop_tick % 2 == 0), segarkan tangkapan layar & file status
-                    if loop_tick % 2 == 0:
-                        try:
-                            active_p = get_primary_web_page()
-                            await active_p.screenshot(path=screenshot_file, full_page=False)
-                            curr_title = await active_p.title()
-                            with open(status_file, "w") as sf:
-                                json.dump({
-                                    "url": active_p.url,
-                                    "title": curr_title,
-                                    "http_status": "200 (Running 24/7)",
-                                    "extensions_loaded": len(ext_paths) if ext_paths else 0,
-                                    "gui_mode": "Xvfb GUI (headless=False)" if has_display else "Headless",
-                                    "time": time.strftime("%Y-%m-%d %H:%M:%S")
-                                }, sf)
-                        except Exception:
-                            pass
+                    try:
+                        active_p = get_primary_web_page()
+                        # Auto-heal jika halaman terlempar ke chrome-error
+                        if "chrome-error" in active_p.url:
+                            log_activity("AUTO_HEAL", f"Mendeteksi error network, memuat ulang {url}...")
+                            try:
+                                await active_p.goto(url, wait_until="domcontentloaded", timeout=30000)
+                            except Exception:
+                                pass
+
+                        await active_p.screenshot(path=screenshot_file, full_page=False)
+                        curr_title = await active_p.title()
+                        with open(status_file, "w") as sf:
+                            json.dump({
+                                "url": active_p.url,
+                                "title": curr_title,
+                                "http_status": "200 (Running 24/7)",
+                                "extensions_loaded": len(ext_paths) if ext_paths else 0,
+                                "gui_mode": "Xvfb GUI (headless=False)" if has_display else "Headless",
+                                "time": time.strftime("%Y-%m-%d %H:%M:%S")
+                            }, sf)
+                    except Exception:
+                        pass
 
             else:
                 # 1. Open YouTube
