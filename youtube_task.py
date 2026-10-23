@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import random
+import shutil
 import sys
 import time
 from urllib.parse import urlparse
@@ -97,6 +98,33 @@ def ensure_proxy_bridge_running():
                     return True
     return False
 
+
+def ensure_virtual_display() -> bool:
+    """Ensures Xvfb virtual display is running on :99 so Chromium runs with full GUI (headless=False) for 100% extension compatibility."""
+    if os.environ.get("DISPLAY"):
+        return True
+
+    xvfb_bin = None
+    for candidate in ["/usr/bin/Xvfb", "/usr/local/bin/Xvfb", "Xvfb"]:
+        if os.path.exists(candidate) or shutil.which(candidate):
+            xvfb_bin = candidate
+            break
+
+    if xvfb_bin:
+        try:
+            chk = subprocess.run(["pgrep", "-f", "Xvfb :99"], stdout=subprocess.DEVNULL)
+            if chk.returncode != 0:
+                logger.info("Starting Xvfb virtual display on :99 (1366x768x24)...")
+                subprocess.Popen([xvfb_bin, ":99", "-screen", "0", "1366x768x24", "-nolisten", "tcp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                time.sleep(1)
+            os.environ["DISPLAY"] = ":99"
+            logger.info("🖥️ Xvfb virtual display active on :99.")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to start Xvfb: {e}")
+    return False
+
+
 SAMPLE_COMMENTS = [
     "Sangat bermanfaat, terima kasih infonya!",
     "Penjelasan yang sangat jelas dan mudah dipahami.",
@@ -130,6 +158,13 @@ async def run_task(task_config: dict):
     os.makedirs(PROFILE_DIR, exist_ok=True)
 
     has_bridge = ensure_proxy_bridge_running()
+    has_display = ensure_virtual_display()
+    is_headless = not has_display
+
+    if has_display:
+        logger.info("🖥️ Virtual display aktif (:99) - Meluncurkan Chromium dalam mode GUI penuh (headless=False) untuk dukungan 100% ekstensi!")
+    else:
+        logger.info("Meluncurkan Chromium dalam mode headless (Xvfb belum terpasang).")
 
     async with async_playwright() as p:
         args = [
@@ -155,7 +190,7 @@ async def run_task(task_config: dict):
 
         launch_kwargs = {
             "user_data_dir": PROFILE_DIR,
-            "headless": True,
+            "headless": is_headless,
             "ignore_https_errors": True,
             "user_agent": human_user_agent,
             "viewport": {"width": 1366, "height": 768},
@@ -265,12 +300,13 @@ async def run_task(task_config: dict):
                             "title": title,
                             "http_status": status_code,
                             "extensions_loaded": len(ext_paths) if ext_paths else 0,
+                            "gui_mode": "Xvfb GUI (headless=False)" if has_display else "Headless",
                             "time": time.strftime("%Y-%m-%d %H:%M:%S")
                         }, sf)
                 except Exception as ef:
                     logger.warning(f"Gagal simpan browser_status: {ef}")
 
-                log_activity("STATUS", f"Halaman dimuat: '{title}' (URL: {primary_page.url}) dengan {len(ext_paths) if ext_paths else 0} ekstensi aktif. Memulai mode 24/7 non-stop.")
+                log_activity("STATUS", f"Halaman dimuat: '{title}' (URL: {primary_page.url}) dengan {len(ext_paths) if ext_paths else 0} ekstensi aktif [{'GUI' if has_display else 'Headless'}]. Memulai mode 24/7 non-stop.")
 
                 # Mode 24/7 Non-Stop: Browser tetap hidup selamanya bersama seluruh ekstensi
                 logger.info("🚀 Chromium 24/7 aktif berjalan tanpa batas waktu...")
@@ -290,6 +326,7 @@ async def run_task(task_config: dict):
                                     "title": curr_title,
                                     "http_status": "200 (Running 24/7)",
                                     "extensions_loaded": len(ext_paths) if ext_paths else 0,
+                                    "gui_mode": "Xvfb GUI (headless=False)" if has_display else "Headless",
                                     "time": time.strftime("%Y-%m-%d %H:%M:%S")
                                 }, sf)
                         except Exception:
