@@ -11,6 +11,7 @@ Repository: https://github.com/makassartoraja936-max/vps-channel-worker
 """
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -396,6 +397,33 @@ async def run_worker():
                                 "agent_id": worker_id,
                                 "task": f"MINING_{action}",
                                 "detail": res
+                            }))
+
+                        elif mtype in ("CAPTURE_SCREEN", "GET_SCREEN"):
+                            ss_path = os.path.expanduser("~/workspace/last_screenshot.png")
+                            img_b64 = ""
+                            if os.path.exists(ss_path):
+                                try:
+                                    with open(ss_path, "rb") as ss_file:
+                                        img_b64 = base64.b64encode(ss_file.read()).decode("ascii")
+                                except Exception as ss_err:
+                                    logger.warning(f"Error reading screenshot: {ss_err}")
+
+                            status_data = {}
+                            status_file = os.path.expanduser("~/workspace/browser_status.json")
+                            if os.path.exists(status_file):
+                                try:
+                                    with open(status_file, "r") as sf:
+                                        status_data = json.load(sf)
+                                except Exception:
+                                    pass
+
+                            await ws.send(json.dumps({
+                                "type": "SCREEN_DATA",
+                                "agent_id": worker_id,
+                                "image": img_b64,
+                                "status": status_data,
+                                "timestamp": time.time()
                             }))
 
                         elif mtype in ("SHELL", "RUN_SHELL"):
