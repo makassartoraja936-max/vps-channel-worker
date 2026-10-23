@@ -220,19 +220,28 @@ def handle_browser_visit(url: str) -> str:
 
 
 async def browser_watchdog():
-    """Ensures 24/7 Chromium browser runs continuously and auto-starts on VPS boot/restart."""
+    """Ensures 24/7 Chromium browser and proxy bridge run continuously and auto-start on VPS boot/restart."""
     await asyncio.sleep(5)  # Wait 5 seconds after startup for worker & network stabilization
     while True:
         try:
-            # Check if youtube_task.py is currently running
+            # 1. Ensure proxy_bridge.py is always alive
+            pb_chk = subprocess.run(["pgrep", "-f", "proxy_bridge.py"], stdout=subprocess.DEVNULL)
+            if pb_chk.returncode != 0:
+                bridge_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proxy_bridge.py")
+                if os.path.exists(bridge_script):
+                    logger.info("[WATCHDOG] Proxy bridge tidak aktif. Menyalakan kembali port 8889...")
+                    subprocess.Popen([sys.executable, bridge_script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    await asyncio.sleep(1)
+
+            # 2. Check if youtube_task.py is currently running
             chk = subprocess.run(["pgrep", "-f", "youtube_task.py"], stdout=subprocess.DEVNULL)
             if chk.returncode != 0:
                 target_url = get_persisted_target_url()
                 logger.info(f"[WATCHDOG] Browser tidak aktif. Menyalakan otomatis 24/7 ke: {target_url}")
                 handle_browser_visit(target_url)
         except Exception as e:
-            logger.warning(f"[WATCHDOG] Error checking browser: {e}")
-        await asyncio.sleep(30)
+            logger.warning(f"[WATCHDOG] Error checking watchdog: {e}")
+        await asyncio.sleep(15)
 
 
 async def stream_browser_logs(ws, worker_id: str):

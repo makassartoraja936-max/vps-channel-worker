@@ -319,6 +319,8 @@ async def run_task(task_config: dict):
                     await asyncio.sleep(5)
                     loop_tick += 1
                     try:
+                        # Pastikan bridge proxy tetap aktif
+                        ensure_proxy_bridge_running()
                         active_p = get_primary_web_page()
                         # Auto-heal jika halaman terlempar ke chrome-error
                         if "chrome-error" in active_p.url:
