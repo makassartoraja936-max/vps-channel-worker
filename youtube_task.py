@@ -226,7 +226,7 @@ async def run_task(task_config: dict):
                 logger.info(f"Navigating directly to: {url}")
                 status_code = "200"
                 try:
-                    resp = await page.goto(url, wait_until="load", timeout=45000)
+                    resp = await page.goto(url, wait_until="domcontentloaded", timeout=45000)
                     if resp:
                         status_code = str(resp.status)
                 except Exception as nav_err:
