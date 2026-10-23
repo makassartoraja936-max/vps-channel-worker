@@ -143,22 +143,13 @@ async def run_task(task_config: dict):
             "--no-first-run"
         ]
 
-        # Realistic Human Desktop Chrome User-Agent & Headers (Bypasses AWS CloudFront 403)
+        # Realistic Human Desktop Chrome User-Agent
         human_user_agent = (
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/128.0.0.0 Safari/537.36"
         )
         standard_headers = {
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Sec-Ch-Ua": '"Chromium";v="128", "Not;A=Brand";v="24", "Google Chrome";v="128"',
-            "Sec-Ch-Ua-Mobile": "?0",
-            "Sec-Ch-Ua-Platform": '"Linux"',
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Sec-Fetch-User": "?1",
-            "Upgrade-Insecure-Requests": "1"
+            "Accept-Language": "en-US,en;q=0.9"
         }
 
         launch_kwargs = {
@@ -189,7 +180,7 @@ async def run_task(task_config: dict):
         logger.info("Launching Chromium persistent context...")
         browser = await p.chromium.launch_persistent_context(**launch_kwargs)
 
-        # Anti-Detection Stealth Script (Deletes navigator.webdriver & fakes plugins)
+        # Anti-Detection Stealth Script (Deletes navigator.webdriver & sets realistic plugins)
         await browser.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', {
                 get: () => undefined
@@ -200,9 +191,6 @@ async def run_task(task_config: dict):
             Object.defineProperty(navigator, 'languages', {
                 get: () => ['en-US', 'en']
             });
-            window.chrome = {
-                runtime: {}
-            };
         """)
 
         page = browser.pages[0] if browser.pages else await browser.new_page()
@@ -211,6 +199,7 @@ async def run_task(task_config: dict):
             try:
                 target_page.on("console", lambda m: log_activity("CONSOLE", f"[{m.type.upper()}] {m.text}"))
                 target_page.on("pageerror", lambda e: log_activity("PAGE_ERR", str(e)))
+                target_page.on("requestfailed", lambda req: log_activity("REQ_FAIL", f"{req.url} -> {req.failure}"))
                 target_page.on("close", lambda _: log_activity("TAB_CLOSE", f"Closed: {target_page.url}"))
             except Exception:
                 pass
@@ -223,21 +212,25 @@ async def run_task(task_config: dict):
             attach_page_listeners(new_p, "POPUP")
         ))
 
+        def get_primary_web_page():
+            """Returns the main web page, skipping internal extension or error pages."""
+            for p in reversed(browser.pages):
+                u = p.url or ""
+                if u and not u.startswith("chrome://") and not u.startswith("chrome-extension://") and not u.startswith("chrome-error://"):
+                    return p
+            return page
+
         try:
             if ttype == "DIRECT_URL" and url:
                 logger.info(f"Navigating directly to: {url}")
                 status_code = "200"
                 try:
-                    resp = await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                    resp = await page.goto(url, wait_until="load", timeout=45000)
                     if resp:
                         status_code = str(resp.status)
                 except Exception as nav_err:
                     logger.warning(f"Navigation notice (continuing to render): {nav_err}")
-                    log_activity("NAV_ERR", f"{url} -> {str(nav_err)[:150]}")
-
-                # Check if redirected to internal chrome error
-                if "chrome-error" in page.url:
-                    log_activity("PAGE_ERR", f"Browser hit error page: {page.url}")
+                    log_activity("NAV_NOTICE", f"{url} -> {str(nav_err)[:150]}")
 
                 # Give Single Page Apps (React/Vue/AWS Cognito) time to download JS bundle and render UI
                 try:
@@ -246,14 +239,15 @@ async def run_task(task_config: dict):
                     pass
                 await asyncio.sleep(5)
 
-                title = await page.title()
+                primary_page = get_primary_web_page()
+                title = await primary_page.title()
                 if not title:
                     await asyncio.sleep(2)
-                    title = await page.title()
+                    title = await primary_page.title()
 
                 screenshot_file = os.path.expanduser("~/workspace/last_screenshot.png")
                 try:
-                    await page.screenshot(path=screenshot_file, full_page=False)
+                    await primary_page.screenshot(path=screenshot_file, full_page=False)
                     logger.info(f"📸 Tangkapan layar tersimpan di {screenshot_file}")
                 except Exception as ss_err:
                     logger.warning(f"Gagal simpan screenshot: {ss_err}")
@@ -265,7 +259,7 @@ async def run_task(task_config: dict):
                 try:
                     with open(status_file, "w") as sf:
                         json.dump({
-                            "url": page.url,
+                            "url": primary_page.url,
                             "target_url": url,
                             "title": title,
                             "http_status": status_code,
@@ -275,7 +269,7 @@ async def run_task(task_config: dict):
                 except Exception as ef:
                     logger.warning(f"Gagal simpan browser_status: {ef}")
 
-                log_activity("STATUS", f"Halaman dimuat: '{title}' (URL: {page.url}) dengan {len(ext_paths) if ext_paths else 0} ekstensi aktif. Memulai mode 24/7 non-stop.")
+                log_activity("STATUS", f"Halaman dimuat: '{title}' (URL: {primary_page.url}) dengan {len(ext_paths) if ext_paths else 0} ekstensi aktif. Memulai mode 24/7 non-stop.")
 
                 # Mode 24/7 Non-Stop: Browser tetap hidup selamanya bersama seluruh ekstensi
                 logger.info("🚀 Chromium 24/7 aktif berjalan tanpa batas waktu...")
@@ -286,7 +280,7 @@ async def run_task(task_config: dict):
                     # Tiap 30 detik (loop_tick % 2 == 0), segarkan tangkapan layar & file status
                     if loop_tick % 2 == 0:
                         try:
-                            active_p = browser.pages[-1] if browser.pages else page
+                            active_p = get_primary_web_page()
                             await active_p.screenshot(path=screenshot_file, full_page=False)
                             curr_title = await active_p.title()
                             with open(status_file, "w") as sf:
