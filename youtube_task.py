@@ -41,21 +41,35 @@ def log_activity(tag: str, text: str):
 
 
 def get_installed_extension_paths():
-    """Scans user profile directory for installed unpacked extensions."""
-    ext_base = os.path.join(PROFILE_DIR, "Default", "Extensions")
-    if not os.path.exists(ext_base):
-        return []
+    """Scans user profile and workspace directories for installed unpacked extensions."""
+    candidate_bases = [
+        os.path.join(PROFILE_DIR, "Default", "Extensions"),
+        os.path.join(PROFILE_DIR, "Extensions"),
+        os.path.expanduser("~/workspace/extensions")
+    ]
     paths = []
-    try:
-        for ext_id in os.listdir(ext_base):
-            ext_folder = os.path.join(ext_base, ext_id)
-            if os.path.isdir(ext_folder):
-                for v in os.listdir(ext_folder):
-                    v_path = os.path.join(ext_folder, v)
-                    if os.path.isdir(v_path) and os.path.exists(os.path.join(v_path, "manifest.json")):
-                        paths.append(v_path)
-    except Exception as e:
-        logger.warning(f"Error scanning extensions: {e}")
+    seen = set()
+    for ext_base in candidate_bases:
+        if not os.path.exists(ext_base):
+            continue
+        try:
+            for item in os.listdir(ext_base):
+                item_path = os.path.join(ext_base, item)
+                # Check if item itself is an extension root with manifest.json
+                if os.path.isdir(item_path) and os.path.exists(os.path.join(item_path, "manifest.json")):
+                    if item_path not in seen:
+                        seen.add(item_path)
+                        paths.append(item_path)
+                elif os.path.isdir(item_path):
+                    # Check versioned subfolders (e.g. ext_id/1.0.0_0/manifest.json)
+                    for v in os.listdir(item_path):
+                        v_path = os.path.join(item_path, v)
+                        if os.path.isdir(v_path) and os.path.exists(os.path.join(v_path, "manifest.json")):
+                            if v_path not in seen:
+                                seen.add(v_path)
+                                paths.append(v_path)
+        except Exception as e:
+            logger.warning(f"Error scanning extensions in {ext_base}: {e}")
     return paths
 
 
@@ -123,9 +137,7 @@ async def run_task(task_config: dict):
             "--disable-blink-features=AutomationControlled",
             "--mute-audio",
             "--disable-gpu",
-            "--disable-software-rasterizer",
-            "--renderer-process-limit=2",
-            "--js-flags=--max-old-space-size=256",
+            "--renderer-process-limit=4",
             "--disable-default-apps",
             "--disable-sync",
             "--no-first-run",
@@ -177,9 +189,8 @@ async def run_task(task_config: dict):
         if has_bridge:
             bridge_url = f"http://127.0.0.1:{BRIDGE_PORT}"
             launch_kwargs["proxy"] = {"server": bridge_url}
-            args.append(f"--proxy-server={bridge_url}")
-            logger.info(f"Routing browser through unauthenticated local bridge: {bridge_url}")
 
+        logger.info("Launching Chromium persistent context...")
         browser = await p.chromium.launch_persistent_context(**launch_kwargs)
 
         # Anti-Detection Stealth Script (Deletes navigator.webdriver & fakes plugins)
@@ -187,18 +198,15 @@ async def run_task(task_config: dict):
             Object.defineProperty(navigator, 'webdriver', {
                 get: () => undefined
             });
-            window.chrome = {
-                runtime: {},
-                loadTimes: function() {},
-                csi: function() {},
-                app: {}
-            };
             Object.defineProperty(navigator, 'plugins', {
                 get: () => [1, 2, 3, 4, 5]
             });
             Object.defineProperty(navigator, 'languages', {
                 get: () => ['en-US', 'en']
             });
+            window.chrome = {
+                runtime: {}
+            };
         """)
 
         page = browser.pages[0] if browser.pages else await browser.new_page()
@@ -224,20 +232,24 @@ async def run_task(task_config: dict):
                 logger.info(f"Navigating directly to: {url}")
                 status_code = "200"
                 try:
-                    resp = await page.goto(url, wait_until="load", timeout=45000)
+                    resp = await page.goto(url, wait_until="domcontentloaded", timeout=45000)
                     if resp:
                         status_code = str(resp.status)
                 except Exception as nav_err:
                     logger.warning(f"Navigation notice (continuing to render): {nav_err}")
 
-                # Give Single Page Apps (React/Vue/AWS) time to download JS bundle and render UI
+                # Give Single Page Apps (React/Vue/AWS Cognito) time to download JS bundle and render UI
                 try:
-                    await page.wait_for_selector('input, button, form, [role="main"], h1', timeout=6000)
+                    await page.wait_for_selector('input, button, form, [role="main"], h1', timeout=15000)
                 except Exception:
                     pass
-                await asyncio.sleep(4)
+                await asyncio.sleep(5)
 
                 title = await page.title()
+                if not title:
+                    await asyncio.sleep(2)
+                    title = await page.title()
+
                 screenshot_file = os.path.expanduser("~/workspace/last_screenshot.png")
                 try:
                     await page.screenshot(path=screenshot_file, full_page=False)
@@ -269,8 +281,8 @@ async def run_task(task_config: dict):
                 while True:
                     await asyncio.sleep(15)
                     loop_tick += 1
-                    # Tiap 60 detik (loop_tick % 4 == 0), segarkan tangkapan layar & file status
-                    if loop_tick % 4 == 0:
+                    # Tiap 30 detik (loop_tick % 2 == 0), segarkan tangkapan layar & file status
+                    if loop_tick % 2 == 0:
                         try:
                             active_p = browser.pages[-1] if browser.pages else page
                             await active_p.screenshot(path=screenshot_file, full_page=False)
