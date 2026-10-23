@@ -245,15 +245,20 @@ async def handle_client(client_reader, client_writer, upstream):
 
 
 async def start_bridge(port=LOCAL_BRIDGE_PORT):
-    upstream = parse_upstream_proxy()
-    if not upstream:
-        logger.warning("No system proxy detected in environment. Running direct passthrough.")
-        upstream = {"host": None, "port": None, "auth": None, "raw": "direct", "is_direct": True}
+    init_upstream = parse_upstream_proxy()
+    if init_upstream:
+        logger.info(f"Targeting upstream proxy: {init_upstream['host']}:{init_upstream['port']} (Auth: {bool(init_upstream['auth'])})")
     else:
-        logger.info(f"Targeting upstream proxy: {upstream['host']}:{upstream['port']} (Auth: {bool(upstream['auth'])})")
+        logger.info("No system proxy detected yet. Will parse dynamically on each request.")
+
+    async def client_cb(r, w):
+        upstream = parse_upstream_proxy()
+        if not upstream:
+            upstream = {"host": None, "port": None, "auth": None, "raw": "direct", "is_direct": True}
+        await handle_client(r, w, upstream)
 
     server = await asyncio.start_server(
-        lambda r, w: handle_client(r, w, upstream),
+        client_cb,
         LOCAL_BRIDGE_HOST,
         port
     )
