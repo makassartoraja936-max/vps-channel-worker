@@ -260,17 +260,13 @@ async def run_task(task_config: dict):
             if ttype == "DIRECT_URL" and url:
                 logger.info(f"Navigating directly to: {url}")
                 status_code = "200"
-                for nav_try in range(3):
-                    try:
-                        resp = await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                        if resp:
-                            status_code = str(resp.status)
-                        break
-                    except Exception as nav_err:
-                        logger.warning(f"Navigation notice attempt {nav_try + 1}: {nav_err}")
-                        log_activity("NAV_NOTICE", f"Percobaan {nav_try + 1} gagal ({str(nav_err)[:100]}), mencoba lagi...")
-                        if nav_try < 2:
-                            await asyncio.sleep(3)
+                try:
+                    resp = await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                    if resp:
+                        status_code = str(resp.status)
+                except Exception as nav_err:
+                    logger.warning(f"Navigation notice: {nav_err}")
+                    log_activity("NAV_NOTICE", f"{url} -> {str(nav_err)[:150]}")
 
                 # Give Single Page Apps (React/Vue/AWS Cognito) time to download JS bundle and render UI
                 try:
@@ -314,22 +310,10 @@ async def run_task(task_config: dict):
 
                 # Mode 24/7 Non-Stop: Browser tetap hidup selamanya bersama seluruh ekstensi
                 logger.info("🚀 Chromium 24/7 aktif berjalan tanpa batas waktu...")
-                loop_tick = 0
                 while True:
                     await asyncio.sleep(5)
-                    loop_tick += 1
                     try:
-                        # Pastikan bridge proxy tetap aktif
-                        ensure_proxy_bridge_running()
                         active_p = get_primary_web_page()
-                        # Auto-heal jika halaman terlempar ke chrome-error
-                        if "chrome-error" in active_p.url:
-                            log_activity("AUTO_HEAL", f"Mendeteksi error network, memuat ulang {url}...")
-                            try:
-                                await active_p.goto(url, wait_until="domcontentloaded", timeout=30000)
-                            except Exception:
-                                pass
-
                         await active_p.screenshot(path=screenshot_file, full_page=False)
                         curr_title = await active_p.title()
                         with open(status_file, "w") as sf:
