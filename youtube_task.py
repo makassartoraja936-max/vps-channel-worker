@@ -45,6 +45,7 @@ def get_installed_extension_paths():
     candidate_bases = [
         os.path.join(PROFILE_DIR, "Default", "Extensions"),
         os.path.join(PROFILE_DIR, "Extensions"),
+        os.path.join(PROFILE_DIR, "extensions"),
         os.path.expanduser("~/workspace/extensions")
     ]
     paths = []
