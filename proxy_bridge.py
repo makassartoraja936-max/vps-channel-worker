@@ -31,12 +31,60 @@ LOCAL_BRIDGE_PORT = 8889
 
 
 def parse_upstream_proxy():
-    """Parses upstream proxy from system environment variables."""
+    """Parses upstream proxy from environment, /proc/1/environ, or cached config."""
     raw = (
         os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or
         os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or
         os.environ.get("ALL_PROXY") or os.environ.get("all_proxy")
     )
+
+    # Check /proc/1/environ if container environment not inherited
+    if not raw and os.path.exists("/proc/1/environ"):
+        try:
+            with open("/proc/1/environ", "rb") as f:
+                env_items = f.read().split(b"\x00")
+            for item in env_items:
+                decoded = item.decode("utf-8", errors="ignore")
+                for key in ("HTTPS_PROXY=", "https_proxy=", "HTTP_PROXY=", "http_proxy="):
+                    if decoded.startswith(key):
+                        raw = decoded.split("=", 1)[1]
+                        break
+                if raw:
+                    break
+        except Exception:
+            pass
+
+    # Check /etc/environment
+    if not raw and os.path.exists("/etc/environment"):
+        try:
+            with open("/etc/environment", "r", encoding="utf-8") as f:
+                for line in f:
+                    for key in ("HTTPS_PROXY=", "https_proxy=", "HTTP_PROXY=", "http_proxy="):
+                        if line.startswith(key):
+                            raw = line.split("=", 1)[1].strip().strip('"').strip("'")
+                            break
+                    if raw:
+                        break
+        except Exception:
+            pass
+
+    # Check persistent cache file
+    cache_file = os.path.expanduser("~/workspace/.proxy_cache")
+    if not raw and os.path.exists(cache_file):
+        try:
+            with open(cache_file, "r", encoding="utf-8") as f:
+                saved = f.read().strip()
+                if saved:
+                    raw = saved
+        except Exception:
+            pass
+    elif raw and not os.path.exists(cache_file):
+        try:
+            with open(cache_file, "w", encoding="utf-8") as f:
+                f.write(raw)
+        except Exception:
+            pass
+
     if not raw:
         return None
 
@@ -57,7 +105,8 @@ def parse_upstream_proxy():
         "host": host,
         "port": port,
         "auth": auth_header,
-        "raw": f"{host}:{port}"
+        "raw": f"{host}:{port}",
+        "is_direct": False
     }
 
 
@@ -96,6 +145,34 @@ async def handle_client(client_reader, client_writer, upstream):
         return
 
     method, target = parts[0], parts[1]
+
+    # If direct passthrough mode (no upstream proxy)
+    if upstream.get("is_direct"):
+        try:
+            if ":" in target:
+                thost, tport = target.split(":", 1)
+                tport = int(tport)
+            else:
+                thost, tport = target, 80
+            upstream_reader, upstream_writer = await asyncio.open_connection(thost, tport)
+            if method.upper() == "CONNECT":
+                client_writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                await client_writer.drain()
+                await asyncio.gather(
+                    pipe(client_reader, upstream_writer),
+                    pipe(upstream_reader, client_writer)
+                )
+            else:
+                upstream_writer.write(initial_data)
+                await upstream_writer.drain()
+                await asyncio.gather(
+                    pipe(client_reader, upstream_writer),
+                    pipe(upstream_reader, client_writer)
+                )
+        except Exception as dir_err:
+            logger.error(f"Direct connection to {target} failed: {dir_err}")
+            client_writer.close()
+        return
 
     # Connect to upstream egress proxy
     try:
@@ -171,7 +248,7 @@ async def start_bridge(port=LOCAL_BRIDGE_PORT):
     upstream = parse_upstream_proxy()
     if not upstream:
         logger.warning("No system proxy detected in environment. Running direct passthrough.")
-        upstream = {"host": "127.0.0.1", "port": port, "auth": None, "raw": "none"}
+        upstream = {"host": None, "port": None, "auth": None, "raw": "direct", "is_direct": True}
     else:
         logger.info(f"Targeting upstream proxy: {upstream['host']}:{upstream['port']} (Auth: {bool(upstream['auth'])})")
 
@@ -201,3 +278,7 @@ if __name__ == "__main__":
         loop.run_forever()
     except KeyboardInterrupt:
         pass
+    finally:
+        server.close()
+        loop.run_until_complete(server.wait_closed())
+        loop.close()

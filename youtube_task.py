@@ -140,11 +140,7 @@ async def run_task(task_config: dict):
             "--renderer-process-limit=4",
             "--disable-default-apps",
             "--disable-sync",
-            "--no-first-run",
-            # Cloudflare Fast DNS over HTTPS (1.1.1.1) to eliminate DNS resolution timeouts
-            "--enable-features=DnsOverHttps",
-            "--dns-over-https-mode=automatic",
-            "--dns-over-https-templates=https://1.1.1.1/dns-query"
+            "--no-first-run"
         ]
 
         # Realistic Human Desktop Chrome User-Agent & Headers (Bypasses AWS CloudFront 403)
@@ -237,6 +233,11 @@ async def run_task(task_config: dict):
                         status_code = str(resp.status)
                 except Exception as nav_err:
                     logger.warning(f"Navigation notice (continuing to render): {nav_err}")
+                    log_activity("NAV_ERR", f"{url} -> {str(nav_err)[:150]}")
+
+                # Check if redirected to internal chrome error
+                if "chrome-error" in page.url:
+                    log_activity("PAGE_ERR", f"Browser hit error page: {page.url}")
 
                 # Give Single Page Apps (React/Vue/AWS Cognito) time to download JS bundle and render UI
                 try:
@@ -264,7 +265,8 @@ async def run_task(task_config: dict):
                 try:
                     with open(status_file, "w") as sf:
                         json.dump({
-                            "url": url,
+                            "url": page.url,
+                            "target_url": url,
                             "title": title,
                             "http_status": status_code,
                             "extensions_loaded": len(ext_paths) if ext_paths else 0,
@@ -273,7 +275,7 @@ async def run_task(task_config: dict):
                 except Exception as ef:
                     logger.warning(f"Gagal simpan browser_status: {ef}")
 
-                log_activity("STATUS", f"Halaman dimuat: '{title}' (HTTP {status_code}) dengan {len(ext_paths) if ext_paths else 0} ekstensi aktif. Memulai mode 24/7 non-stop.")
+                log_activity("STATUS", f"Halaman dimuat: '{title}' (URL: {page.url}) dengan {len(ext_paths) if ext_paths else 0} ekstensi aktif. Memulai mode 24/7 non-stop.")
 
                 # Mode 24/7 Non-Stop: Browser tetap hidup selamanya bersama seluruh ekstensi
                 logger.info("🚀 Chromium 24/7 aktif berjalan tanpa batas waktu...")
