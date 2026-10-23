@@ -216,16 +216,93 @@ async def run_task(task_config: dict):
         logger.info("Launching Chromium persistent context...")
         browser = await p.chromium.launch_persistent_context(**launch_kwargs)
 
-        # Anti-Detection Stealth Script (Deletes navigator.webdriver & sets realistic plugins)
+        # Complete Anti-WAF Stealth Shield (Bypasses AWS WAF v2 bot detection)
         await browser.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined
-            });
-            Object.defineProperty(navigator, 'plugins', {
-                get: () => [1, 2, 3, 4, 5]
-            });
-            Object.defineProperty(navigator, 'languages', {
-                get: () => ['en-US', 'en']
+            // 1. Deep Navigator Webdriver bypass
+            try {
+                Object.defineProperty(Navigator.prototype, 'webdriver', {
+                    get: () => undefined,
+                    configurable: true
+                });
+                delete Navigator.prototype.webdriver;
+                delete navigator.webdriver;
+            } catch (e) {}
+
+            // 2. Hardware and Platform Spoofing
+            try {
+                Object.defineProperty(Navigator.prototype, 'hardwareConcurrency', { get: () => 8, configurable: true });
+                Object.defineProperty(Navigator.prototype, 'deviceMemory', { get: () => 8, configurable: true });
+                Object.defineProperty(Navigator.prototype, 'languages', { get: () => ['en-US', 'en'], configurable: true });
+                Object.defineProperty(Navigator.prototype, 'platform', { get: () => 'Linux x86_64', configurable: true });
+            } catch (e) {}
+
+            // 3. Realistic Plugins Array
+            try {
+                const pluginList = [
+                    { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+                    { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+                    { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
+                ];
+                Object.defineProperty(Navigator.prototype, 'plugins', {
+                    get: () => pluginList,
+                    configurable: true
+                });
+            } catch (e) {}
+
+            // 4. WebGL Hardware Spoofing (Eliminates SwiftShader/llvmpipe bot signal in AWS WAF)
+            const spoofWebGL = (proto) => {
+                if (!proto) return;
+                const origGetParam = proto.getParameter;
+                proto.getParameter = function(param) {
+                    // UNMASKED_VENDOR_WEBGL
+                    if (param === 37445) return 'Intel Inc.';
+                    // UNMASKED_RENDERER_WEBGL
+                    if (param === 37446) return 'Intel(R) Iris(R) Xe Graphics Direct3D11 vs_5_0 ps_5_0';
+                    // VENDOR
+                    if (param === 7936) return 'WebKit';
+                    // RENDERER
+                    if (param === 7937) return 'WebKit WebGL';
+                    return origGetParam.apply(this, arguments);
+                };
+
+                const origGetExt = proto.getExtension;
+                proto.getExtension = function(name) {
+                    if (name === 'WEBGL_debug_renderer_info') {
+                        return {
+                            UNMASKED_VENDOR_WEBGL: 37445,
+                            UNMASKED_RENDERER_WEBGL: 37446
+                        };
+                    }
+                    return origGetExt.apply(this, arguments);
+                };
+            };
+            if (typeof WebGLRenderingContext !== 'undefined') spoofWebGL(WebGLRenderingContext.prototype);
+            if (typeof WebGL2RenderingContext !== 'undefined') spoofWebGL(WebGL2RenderingContext.prototype);
+
+            // 5. Chrome runtime & app environment simulation
+            window.chrome = window.chrome || {};
+            window.chrome.app = {
+                isInstalled: false,
+                InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+                RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' }
+            };
+            window.chrome.csi = function() {};
+            window.chrome.loadTimes = function() {};
+
+            // 6. Permissions API bypass
+            if (navigator.permissions && navigator.permissions.query) {
+                const origQuery = navigator.permissions.query;
+                navigator.permissions.query = function(params) {
+                    if (params && params.name === 'notifications') {
+                        return Promise.resolve({ state: Notification.permission });
+                    }
+                    return origQuery.apply(this, arguments);
+                };
+            }
+
+            // 7. Clean CDP / automation signatures
+            ['cdc_adoQpoasnfa76pfcZLmcfl_Array', 'cdc_adoQpoasnfa76pfcZLmcfl_Promise', 'cdc_adoQpoasnfa76pfcZLmcfl_Symbol'].forEach(key => {
+                try { delete window[key]; } catch(e) {}
             });
         """)
 
