@@ -147,17 +147,13 @@ def find_system_browser() -> str:
     Supports persistent portable Thorium in ~/workspace that survives any VM reboot or replacement!
     """
     candidates = [
-        # 1. Permanent portable Thorium in persistent ~/workspace directory (NEVER lost on VM replacement)
-        os.path.expanduser("~/workspace/thorium/opt/chromium.org/thorium/thorium-browser"),
+        # 1. Real ELF binary in persistent workspace (MUST be actual binary, NEVER a shell wrapper script!)
         os.path.expanduser("~/workspace/thorium/opt/chromium.org/thorium/thorium"),
-        os.path.expanduser("~/workspace/thorium/usr/bin/thorium-browser"),
-        # 2. Installed system packages
-        "/usr/bin/thorium-browser",
-        "/opt/chromium.org/thorium/thorium-browser",
-        "/usr/bin/google-chrome-stable",
-        "/usr/bin/google-chrome",
-        "/usr/bin/chromium-browser",
-        "/usr/bin/chromium"
+        # 2. Real ELF binary in system packages
+        "/opt/chromium.org/thorium/thorium",
+        "/opt/google/chrome/chrome",
+        "/usr/lib/chromium-browser/chromium-browser",
+        "/usr/lib/chromium/chromium"
     ]
     for c in candidates:
         if os.path.exists(c) and os.access(c, os.X_OK):
