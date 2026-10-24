@@ -345,6 +345,7 @@ async def run_worker():
                     "agent_id": worker_id,
                     "vps_name": vps_name,
                     "version": "2.0.0",
+                    "auth_token": auth_key,
                     **get_system_metrics()
                 }
                 await ws.send(json.dumps(greeting))
