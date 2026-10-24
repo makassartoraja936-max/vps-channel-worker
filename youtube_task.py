@@ -264,8 +264,37 @@ async def run_task(task_config: dict):
             bridge_url = f"http://127.0.0.1:{BRIDGE_PORT}"
             launch_kwargs["proxy"] = {"server": bridge_url}
 
+        # Clean stale profile locks and dangling browser processes
+        for lock_file in ["SingletonLock", "SingletonSocket", "SingletonCookie"]:
+            lp = os.path.join(PROFILE_DIR, lock_file)
+            if os.path.exists(lp) or os.path.islink(lp):
+                try:
+                    if os.path.islink(lp):
+                        os.unlink(lp)
+                    else:
+                        os.remove(lp)
+                except Exception:
+                    pass
+
         logger.info("Launching Chromium persistent context...")
-        browser = await p.chromium.launch_persistent_context(**launch_kwargs)
+        try:
+            browser = await p.chromium.launch_persistent_context(**launch_kwargs)
+        except Exception as launch_err:
+            if "already in use" in str(launch_err) or "existing browser session" in str(launch_err):
+                logger.warning("Profile lock terdeteksi. Membersihkan proses lama dan mengulang launch...")
+                subprocess.run(["pkill", "-9", "-f", "thorium"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(["pkill", "-9", "-f", "chrome"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(["pkill", "-9", "-f", "chromium"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                for lock_file in ["SingletonLock", "SingletonSocket", "SingletonCookie"]:
+                    lp = os.path.join(PROFILE_DIR, lock_file)
+                    try:
+                        if os.path.islink(lp): os.unlink(lp)
+                        elif os.path.exists(lp): os.remove(lp)
+                    except Exception: pass
+                await asyncio.sleep(2)
+                browser = await p.chromium.launch_persistent_context(**launch_kwargs)
+            else:
+                raise launch_err
 
         # Apply Playwright-Stealth Anti-Detection Engine
         if HAS_STEALTH:
