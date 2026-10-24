@@ -439,10 +439,17 @@ async def run_worker():
                             cmd_str = msg.get("cmd") or msg.get("command", "")
                             logger.info(f"Executing shell command: {cmd_str}")
                             try:
-                                res = subprocess.run(cmd_str, shell=True, capture_output=True, text=True, timeout=120)
-                                out = (res.stdout + res.stderr).strip()[:2000]
+                                proc = await asyncio.create_subprocess_shell(
+                                    cmd_str,
+                                    stdout=asyncio.subprocess.PIPE,
+                                    stderr=asyncio.subprocess.PIPE
+                                )
+                                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+                                out = (stdout.decode(errors="replace") + stderr.decode(errors="replace")).strip()[:2000]
                                 if not out:
-                                    out = f"(exit code {res.returncode})"
+                                    out = f"(exit code {proc.returncode})"
+                            except asyncio.TimeoutError:
+                                out = "Execution error: Command timed out after 300 seconds"
                             except Exception as e:
                                 out = f"Execution error: {e}"
 
