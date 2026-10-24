@@ -44,6 +44,13 @@ done
 EOF_LAUNCH
 chmod +x "$SCRIPT_DIR/run.sh"
 
+# 4. Start runner in background if not already active
+if ! pgrep -f "worker.py" > /dev/null 2>&1; then
+    echo "Starting worker daemon in background..."
+    nohup bash "$SCRIPT_DIR/run.sh" > /dev/null 2>&1 &
+    sleep 2
+fi
+
 echo "=========================================================="
-echo "Installation complete."
+echo "Installation complete. Worker is active and connected."
 echo "=========================================================="
