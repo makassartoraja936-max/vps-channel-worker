@@ -210,7 +210,12 @@ def handle_browser_visit(url: str) -> str:
 
         yt_worker = os.path.join(os.path.dirname(os.path.abspath(__file__)), "youtube_task.py")
         if os.path.exists(yt_worker):
-            subprocess.Popen([sys.executable, yt_worker, json.dumps({"type": "DIRECT_URL", "url": url})])
+            err_log_path = os.path.expanduser("~/workspace/browser_stderr.log")
+            try:
+                err_f = open(err_log_path, "a", encoding="utf-8")
+            except Exception:
+                err_f = subprocess.DEVNULL
+            subprocess.Popen([sys.executable, yt_worker, json.dumps({"type": "DIRECT_URL", "url": url})], stdout=err_f, stderr=err_f)
             return f"Chromium 24/7 diluncurkan untuk {url}"
         else:
             subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
