@@ -255,10 +255,25 @@ async def run_task(task_config: dict):
         else:
             logger.info("Menggunakan browser Chromium bawaan Playwright.")
 
+        # Container & D-Bus stability flags (prevents keyring/D-Bus abort in Linux VM)
+        args.extend([
+            "--password-store=basic",
+            "--use-mock-keychain",
+            "--disable-component-update",
+            "--disable-domain-reliability"
+        ])
+
+        # Ensure directory for icons exists so Thorium/Chrome doesn't complain
+        try:
+            os.makedirs(os.path.expanduser("~/.local/share/icons/hicolor"), exist_ok=True)
+        except Exception:
+            pass
+
         # If proxy bridge is active, route unauthenticated traffic through local bridge
         if has_bridge:
             bridge_url = f"http://127.0.0.1:{BRIDGE_PORT}"
             launch_kwargs["proxy"] = {"server": bridge_url}
+            args.append(f"--proxy-server={bridge_url}")
 
         # Clean stale profile locks and dangling browser processes
         for lock_file in ["SingletonLock", "SingletonSocket", "SingletonCookie"]:
@@ -276,21 +291,25 @@ async def run_task(task_config: dict):
         try:
             browser = await p.chromium.launch_persistent_context(**launch_kwargs)
         except Exception as launch_err:
-            if "already in use" in str(launch_err) or "existing browser session" in str(launch_err):
-                logger.warning("Profile lock terdeteksi. Membersihkan proses lama dan mengulang launch...")
-                subprocess.run(["pkill", "-9", "-f", "thorium"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                subprocess.run(["pkill", "-9", "-f", "chrome"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                subprocess.run(["pkill", "-9", "-f", "chromium"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                for lock_file in ["SingletonLock", "SingletonSocket", "SingletonCookie"]:
-                    lp = os.path.join(PROFILE_DIR, lock_file)
-                    try:
-                        if os.path.islink(lp): os.unlink(lp)
-                        elif os.path.exists(lp): os.remove(lp)
-                    except Exception: pass
-                await asyncio.sleep(2)
-                browser = await p.chromium.launch_persistent_context(**launch_kwargs)
-            else:
-                raise launch_err
+            logger.warning(f"Peluncuran pertama terkendala: {launch_err}")
+            # Clean processes and locks
+            subprocess.run(["pkill", "-9", "-f", "thorium"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["pkill", "-9", "-f", "chrome"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["pkill", "-9", "-f", "chromium"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            for lock_file in ["SingletonLock", "SingletonSocket", "SingletonCookie"]:
+                lp = os.path.join(PROFILE_DIR, lock_file)
+                try:
+                    if os.path.islink(lp): os.unlink(lp)
+                    elif os.path.exists(lp): os.remove(lp)
+                except Exception: pass
+            await asyncio.sleep(2)
+
+            # If external system browser failed, gracefully fall back to built-in Chromium
+            if "executable_path" in launch_kwargs:
+                logger.warning("Browser sistem bermasalah. Beralih menggunakan browser Chromium bawaan...")
+                del launch_kwargs["executable_path"]
+
+            browser = await p.chromium.launch_persistent_context(**launch_kwargs)
 
         # Apply Playwright-Stealth Anti-Detection Engine
         if HAS_STEALTH:
