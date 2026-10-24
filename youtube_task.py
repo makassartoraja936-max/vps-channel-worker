@@ -192,6 +192,7 @@ async def run_task(task_config: dict):
             "user_data_dir": PROFILE_DIR,
             "headless": is_headless,
             "ignore_https_errors": True,
+            "ignore_default_args": ["--enable-automation"],
             "user_agent": human_user_agent,
             "viewport": {"width": 1366, "height": 768},
             "locale": "en-US",
@@ -218,14 +219,12 @@ async def run_task(task_config: dict):
 
         # Complete Anti-WAF Stealth Shield (Bypasses AWS WAF v2 bot detection)
         await browser.add_init_script("""
-            // 1. Deep Navigator Webdriver bypass
+            // 1. Deep Navigator Webdriver bypass (real Chrome has webdriver=false on prototype)
             try {
                 Object.defineProperty(Navigator.prototype, 'webdriver', {
-                    get: () => undefined,
+                    get: () => false,
                     configurable: true
                 });
-                delete Navigator.prototype.webdriver;
-                delete navigator.webdriver;
             } catch (e) {}
 
             // 2. Hardware and Platform Spoofing
@@ -255,9 +254,9 @@ async def run_task(task_config: dict):
                 const origGetParam = proto.getParameter;
                 proto.getParameter = function(param) {
                     // UNMASKED_VENDOR_WEBGL
-                    if (param === 37445) return 'Intel Inc.';
+                    if (param === 37445) return 'Intel Open Source Technology Center';
                     // UNMASKED_RENDERER_WEBGL
-                    if (param === 37446) return 'Intel(R) Iris(R) Xe Graphics Direct3D11 vs_5_0 ps_5_0';
+                    if (param === 37446) return 'Mesa Intel(R) Xe Graphics (TGL GT2)';
                     // VENDOR
                     if (param === 7936) return 'WebKit';
                     // RENDERER
