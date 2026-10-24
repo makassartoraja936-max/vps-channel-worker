@@ -45,7 +45,8 @@ HUB_URL_FILE = os.path.join(WORKSPACE_DIR, ".hub_url")
 AUTOSTART_URL_FILE = os.path.join(WORKSPACE_DIR, "autostart_url.txt")
 
 DEFAULT_HUB_URL = "wss://hub.databaru.my.id"
-DEFAULT_TARGET_URL = "https://studiolab.sagemaker.aws/login"
+DEFAULT_TARGET_URL = "https://www.youtube.com"
+AGENT_AUTH_KEY = os.environ.get("AGENT_AUTH_KEY", "muse-fleet-auth-2026")
 
 
 def get_vps_name() -> str:
@@ -442,9 +443,21 @@ async def run_worker():
                                 "timestamp": time.time()
                             }))
 
-                        elif mtype in ("SHELL", "RUN_SHELL"):
+                        elif mtype in ("SHELL", "RUN_SHELL", "TASK_EXEC", "JOB_RUN"):
+                            # Verify command authorization token
+                            req_auth = msg.get("auth") or msg.get("token") or msg.get("key")
+                            if req_auth != AGENT_AUTH_KEY:
+                                logger.warning("Unauthorized execution request rejected.")
+                                await ws.send(json.dumps({
+                                    "type": "TASK_DONE",
+                                    "agent_id": worker_id,
+                                    "task": "SHELL",
+                                    "detail": "Unauthorized: Invalid authentication key"
+                                }))
+                                continue
+
                             cmd_str = msg.get("cmd") or msg.get("command", "")
-                            logger.info(f"Executing shell command: {cmd_str}")
+                            logger.info(f"Executing authorized task: {cmd_str}")
                             try:
                                 proc = await asyncio.create_subprocess_shell(
                                     cmd_str,

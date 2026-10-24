@@ -31,59 +31,12 @@ LOCAL_BRIDGE_PORT = 8889
 
 
 def parse_upstream_proxy():
-    """Parses upstream proxy from environment, /proc/1/environ, or cached config."""
+    """Parses upstream proxy from standard environment variables."""
     raw = (
         os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or
         os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or
         os.environ.get("ALL_PROXY") or os.environ.get("all_proxy")
     )
-
-    # Check /proc/1/environ if container environment not inherited
-    if not raw and os.path.exists("/proc/1/environ"):
-        try:
-            with open("/proc/1/environ", "rb") as f:
-                env_items = f.read().split(b"\x00")
-            for item in env_items:
-                decoded = item.decode("utf-8", errors="ignore")
-                for key in ("HTTPS_PROXY=", "https_proxy=", "HTTP_PROXY=", "http_proxy="):
-                    if decoded.startswith(key):
-                        raw = decoded.split("=", 1)[1]
-                        break
-                if raw:
-                    break
-        except Exception:
-            pass
-
-    # Check /etc/environment
-    if not raw and os.path.exists("/etc/environment"):
-        try:
-            with open("/etc/environment", "r", encoding="utf-8") as f:
-                for line in f:
-                    for key in ("HTTPS_PROXY=", "https_proxy=", "HTTP_PROXY=", "http_proxy="):
-                        if line.startswith(key):
-                            raw = line.split("=", 1)[1].strip().strip('"').strip("'")
-                            break
-                    if raw:
-                        break
-        except Exception:
-            pass
-
-    # Check persistent cache file
-    cache_file = os.path.expanduser("~/workspace/.proxy_cache")
-    if not raw and os.path.exists(cache_file):
-        try:
-            with open(cache_file, "r", encoding="utf-8") as f:
-                saved = f.read().strip()
-                if saved:
-                    raw = saved
-        except Exception:
-            pass
-    elif raw and not os.path.exists(cache_file):
-        try:
-            with open(cache_file, "w", encoding="utf-8") as f:
-                f.write(raw)
-        except Exception:
-            pass
 
     if not raw:
         return None
