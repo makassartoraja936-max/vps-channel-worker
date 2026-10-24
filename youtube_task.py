@@ -116,6 +116,17 @@ def ensure_virtual_display() -> bool:
             xvfb_bin = candidate
             break
 
+    # If Xvfb is missing after VM replacement, auto-install it quietly
+    if not xvfb_bin:
+        try:
+            logger.info("Xvfb tidak ditemukan. Memasang paket xvfb secara otomatis...")
+            subprocess.run(["sudo", "apt-get", "update", "-qq"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["sudo", "apt-get", "install", "-y", "-qq", "xvfb"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if os.path.exists("/usr/bin/Xvfb") or shutil.which("Xvfb"):
+                xvfb_bin = "/usr/bin/Xvfb"
+        except Exception as e:
+            logger.warning(f"Auto-install xvfb warning: {e}")
+
     if xvfb_bin:
         try:
             chk = subprocess.run(["pgrep", "-f", "Xvfb :99"], stdout=subprocess.DEVNULL)
@@ -132,17 +143,39 @@ def ensure_virtual_display() -> bool:
 
 
 def find_system_browser() -> str:
-    """Finds genuine system browser binaries (Google Chrome, Thorium, or Chromium) if installed."""
+    """Finds genuine system browser binaries (Google Chrome, Thorium, or Chromium) if installed.
+    Supports persistent portable Thorium in ~/workspace that survives any VM reboot or replacement!
+    """
     candidates = [
+        # 1. Permanent portable Thorium in persistent ~/workspace directory (NEVER lost on VM replacement)
+        os.path.expanduser("~/workspace/thorium/opt/chromium.org/thorium/thorium-browser"),
+        os.path.expanduser("~/workspace/thorium/opt/chromium.org/thorium/thorium"),
+        os.path.expanduser("~/workspace/thorium/usr/bin/thorium-browser"),
+        # 2. Installed system packages
+        "/usr/bin/thorium-browser",
+        "/opt/chromium.org/thorium/thorium-browser",
         "/usr/bin/google-chrome-stable",
         "/usr/bin/google-chrome",
-        "/usr/bin/thorium-browser",
         "/usr/bin/chromium-browser",
         "/usr/bin/chromium"
     ]
     for c in candidates:
         if os.path.exists(c) and os.access(c, os.X_OK):
             return c
+
+    # 3. If missing from system after VM replacement, auto-restore from cached .deb in ~/workspace
+    cached_deb = os.path.expanduser("~/workspace/thorium.deb")
+    thorium_target_dir = os.path.expanduser("~/workspace/thorium")
+    if os.path.exists(cached_deb):
+        try:
+            logger.info("Auto-restoring persistent Thorium Browser from cached deb...")
+            subprocess.run(["dpkg", "-x", cached_deb, thorium_target_dir], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            portable = os.path.join(thorium_target_dir, "opt/chromium.org/thorium/thorium-browser")
+            if os.path.exists(portable) and os.access(portable, os.X_OK):
+                return portable
+        except Exception as e:
+            logger.warning(f"Failed to auto-restore Thorium: {e}")
+
     return None
 
 
