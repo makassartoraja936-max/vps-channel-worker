@@ -22,6 +22,12 @@ from urllib.parse import urlparse
 import socket
 import subprocess
 
+try:
+    from playwright_stealth import Stealth
+    HAS_STEALTH = True
+except ImportError:
+    HAS_STEALTH = False
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("YouTubeWorker")
 
@@ -179,25 +185,14 @@ async def run_task(task_config: dict):
             "--no-first-run"
         ]
 
-        # Realistic Human Desktop Chrome User-Agent
-        human_user_agent = (
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/128.0.0.0 Safari/537.36"
-        )
-        standard_headers = {
-            "Accept-Language": "en-US,en;q=0.9"
-        }
-
         launch_kwargs = {
             "user_data_dir": PROFILE_DIR,
             "headless": is_headless,
             "ignore_https_errors": True,
             "ignore_default_args": ["--enable-automation"],
-            "user_agent": human_user_agent,
             "viewport": {"width": 1366, "height": 768},
             "locale": "en-US",
             "timezone_id": "UTC",
-            "extra_http_headers": standard_headers,
             "args": args
         }
 
@@ -217,93 +212,24 @@ async def run_task(task_config: dict):
         logger.info("Launching Chromium persistent context...")
         browser = await p.chromium.launch_persistent_context(**launch_kwargs)
 
-        # Complete Anti-WAF Stealth Shield (Bypasses AWS WAF v2 bot detection)
-        await browser.add_init_script("""
-            // 1. Deep Navigator Webdriver bypass (real Chrome has webdriver=false on prototype)
-            try {
-                Object.defineProperty(Navigator.prototype, 'webdriver', {
-                    get: () => false,
-                    configurable: true
-                });
-            } catch (e) {}
-
-            // 2. Hardware and Platform Spoofing
-            try {
-                Object.defineProperty(Navigator.prototype, 'hardwareConcurrency', { get: () => 8, configurable: true });
-                Object.defineProperty(Navigator.prototype, 'deviceMemory', { get: () => 8, configurable: true });
-                Object.defineProperty(Navigator.prototype, 'languages', { get: () => ['en-US', 'en'], configurable: true });
-                Object.defineProperty(Navigator.prototype, 'platform', { get: () => 'Linux x86_64', configurable: true });
-            } catch (e) {}
-
-            // 3. Realistic Plugins Array
-            try {
-                const pluginList = [
-                    { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-                    { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
-                    { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
-                ];
-                Object.defineProperty(Navigator.prototype, 'plugins', {
-                    get: () => pluginList,
-                    configurable: true
-                });
-            } catch (e) {}
-
-            // 4. WebGL Hardware Spoofing (Eliminates SwiftShader/llvmpipe bot signal in AWS WAF)
-            const spoofWebGL = (proto) => {
-                if (!proto) return;
-                const origGetParam = proto.getParameter;
-                proto.getParameter = function(param) {
-                    // UNMASKED_VENDOR_WEBGL
-                    if (param === 37445) return 'Intel Open Source Technology Center';
-                    // UNMASKED_RENDERER_WEBGL
-                    if (param === 37446) return 'Mesa Intel(R) Xe Graphics (TGL GT2)';
-                    // VENDOR
-                    if (param === 7936) return 'WebKit';
-                    // RENDERER
-                    if (param === 7937) return 'WebKit WebGL';
-                    return origGetParam.apply(this, arguments);
-                };
-
-                const origGetExt = proto.getExtension;
-                proto.getExtension = function(name) {
-                    if (name === 'WEBGL_debug_renderer_info') {
-                        return {
-                            UNMASKED_VENDOR_WEBGL: 37445,
-                            UNMASKED_RENDERER_WEBGL: 37446
-                        };
-                    }
-                    return origGetExt.apply(this, arguments);
-                };
-            };
-            if (typeof WebGLRenderingContext !== 'undefined') spoofWebGL(WebGLRenderingContext.prototype);
-            if (typeof WebGL2RenderingContext !== 'undefined') spoofWebGL(WebGL2RenderingContext.prototype);
-
-            // 5. Chrome runtime & app environment simulation
-            window.chrome = window.chrome || {};
-            window.chrome.app = {
-                isInstalled: false,
-                InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
-                RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' }
-            };
-            window.chrome.csi = function() {};
-            window.chrome.loadTimes = function() {};
-
-            // 6. Permissions API bypass
-            if (navigator.permissions && navigator.permissions.query) {
-                const origQuery = navigator.permissions.query;
-                navigator.permissions.query = function(params) {
-                    if (params && params.name === 'notifications') {
-                        return Promise.resolve({ state: Notification.permission });
-                    }
-                    return origQuery.apply(this, arguments);
-                };
-            }
-
-            // 7. Clean CDP / automation signatures
-            ['cdc_adoQpoasnfa76pfcZLmcfl_Array', 'cdc_adoQpoasnfa76pfcZLmcfl_Promise', 'cdc_adoQpoasnfa76pfcZLmcfl_Symbol'].forEach(key => {
-                try { delete window[key]; } catch(e) {}
-            });
-        """)
+        # Apply Playwright-Stealth Anti-Detection Engine
+        if HAS_STEALTH:
+            try:
+                stealth = Stealth(
+                    navigator_platform_override="Linux x86_64",
+                    webgl_vendor_override="Intel Inc.",
+                    webgl_renderer_override="Intel Iris OpenGL Engine"
+                )
+                await stealth.apply_stealth_async(browser)
+                logger.info("🛡️ Playwright-Stealth Anti-Detection Engine active.")
+            except Exception as e:
+                logger.warning(f"Failed to apply playwright-stealth: {e}")
+        else:
+            await browser.add_init_script("""
+                try {
+                    delete Object.getPrototypeOf(navigator).webdriver;
+                } catch(e) {}
+            """)
 
         page = browser.pages[0] if browser.pages else await browser.new_page()
 
