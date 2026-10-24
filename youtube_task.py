@@ -131,6 +131,21 @@ def ensure_virtual_display() -> bool:
     return False
 
 
+def find_system_browser() -> str:
+    """Finds genuine system browser binaries (Google Chrome, Thorium, or Chromium) if installed."""
+    candidates = [
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/google-chrome",
+        "/usr/bin/thorium-browser",
+        "/usr/bin/chromium-browser",
+        "/usr/bin/chromium"
+    ]
+    for c in candidates:
+        if os.path.exists(c) and os.access(c, os.X_OK):
+            return c
+    return None
+
+
 SAMPLE_COMMENTS = [
     "Sangat bermanfaat, terima kasih infonya!",
     "Penjelasan yang sangat jelas dan mudah dipahami.",
@@ -203,6 +218,13 @@ async def run_task(task_config: dict):
             args.append(f"--disable-extensions-except={ext_arg}")
             args.append(f"--load-extension={ext_arg}")
             logger.info(f"Loaded {len(ext_paths)} extensions into Chromium: {[os.path.basename(os.path.dirname(p)) for p in ext_paths]}")
+
+        system_browser = find_system_browser()
+        if system_browser:
+            launch_kwargs["executable_path"] = system_browser
+            logger.info(f"🌐 Menggunakan browser sistem asli: {system_browser}")
+        else:
+            logger.info("Menggunakan browser Chromium bawaan Playwright.")
 
         # If proxy bridge is active, route unauthenticated traffic through local bridge
         if has_bridge:
