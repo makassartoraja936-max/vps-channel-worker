@@ -136,6 +136,19 @@ def ensure_virtual_display() -> bool:
                 time.sleep(1)
             os.environ["DISPLAY"] = ":99"
             logger.info("🖥️ Xvfb virtual display active on :99.")
+
+            # Ensure lightweight window manager (openbox) runs so X11 windows are focused and painted
+            wm = shutil.which("openbox")
+            if not wm:
+                try:
+                    subprocess.run(["sudo", "apt-get", "install", "-y", "-qq", "openbox"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    wm = shutil.which("openbox")
+                except Exception:
+                    pass
+            if wm:
+                if subprocess.run(["pgrep", "-f", "openbox"], stdout=subprocess.DEVNULL).returncode != 0:
+                    subprocess.Popen([wm], env=os.environ.copy(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
             return True
         except Exception as e:
             logger.warning(f"Failed to start Xvfb: {e}")
@@ -242,6 +255,10 @@ def run_native_browser(target_url: str):
         "--no-sandbox",
         "--disable-dev-shm-usage",
         "--disable-gpu",
+        "--enable-unsafe-swiftshader",
+        "--window-position=0,0",
+        "--window-size=1366,768",
+        "--start-maximized",
         "--disable-popup-blocking",
         "--allow-running-insecure-content",
         "--no-default-browser-check",
