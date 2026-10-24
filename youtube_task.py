@@ -147,13 +147,16 @@ def find_system_browser() -> str:
     Supports persistent portable Thorium in ~/workspace that survives any VM reboot or replacement!
     """
     candidates = [
-        # 1. Real ELF binary in persistent workspace (MUST be actual binary, NEVER a shell wrapper script!)
-        os.path.expanduser("~/workspace/thorium/opt/chromium.org/thorium/thorium"),
-        # 2. Real ELF binary in system packages
+        "/usr/bin/thorium-browser",
+        "/opt/chromium.org/thorium/thorium-browser",
         "/opt/chromium.org/thorium/thorium",
+        os.path.expanduser("~/workspace/thorium/opt/chromium.org/thorium/thorium-browser"),
+        os.path.expanduser("~/workspace/thorium/opt/chromium.org/thorium/thorium"),
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/google-chrome",
         "/opt/google/chrome/chrome",
-        "/usr/lib/chromium-browser/chromium-browser",
-        "/usr/lib/chromium/chromium"
+        "/usr/bin/chromium-browser",
+        "/usr/bin/chromium"
     ]
     for c in candidates:
         if os.path.exists(c) and os.access(c, os.X_OK):
@@ -202,7 +205,7 @@ def run_native_browser(target_url: str):
 
     browser_bin = find_system_browser()
     if not browser_bin:
-        for c in ["/usr/bin/google-chrome-stable", "/usr/bin/google-chrome", "/usr/bin/chromium-browser", "/usr/bin/chromium"]:
+        for c in ["/usr/bin/thorium-browser", "/opt/chromium.org/thorium/thorium-browser", "/usr/bin/google-chrome-stable", "/usr/bin/google-chrome", "/usr/bin/chromium-browser", "/usr/bin/chromium"]:
             if os.path.exists(c):
                 browser_bin = c
                 break
@@ -211,14 +214,22 @@ def run_native_browser(target_url: str):
         logger.error("Tidak ada browser native yang ditemukan di sistem!")
         return
 
-    # Clean old processes and stale profile locks
-    subprocess.run(["pkill", "-9", "-f", "thorium"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    subprocess.run(["pkill", "-9", "-f", "chrome"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # Clean old processes and stale profile locks (kill root and user processes)
+    for p in ["thorium", "chromium", "chrome", "ms-playwright"]:
+        subprocess.run(["pkill", "-9", "-f", p], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["sudo", "pkill", "-9", "-f", p], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
     for lock_file in ["SingletonLock", "SingletonSocket", "SingletonCookie"]:
         lp = os.path.join(PROFILE_DIR, lock_file)
         try:
             if os.path.islink(lp): os.unlink(lp)
             elif os.path.exists(lp): os.remove(lp)
+        except Exception: pass
+
+    # Auto-install scrot if not present for instant screen capture
+    if not shutil.which("scrot"):
+        try:
+            subprocess.run(["sudo", "apt-get", "install", "-y", "-qq", "scrot"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception: pass
 
     ext_paths = get_installed_extension_paths()
@@ -247,6 +258,8 @@ def run_native_browser(target_url: str):
 
     env = os.environ.copy()
     env["DISPLAY"] = ":99"
+    # Ensure library paths for bundled libraries
+    env["LD_LIBRARY_PATH"] = "/opt/chromium.org/thorium:/opt/chromium.org/thorium/lib:" + env.get("LD_LIBRARY_PATH", "")
 
     try:
         os.makedirs(os.path.expanduser("~/.local/share/icons/hicolor"), exist_ok=True)
@@ -254,7 +267,7 @@ def run_native_browser(target_url: str):
         pass
 
     logger.info(f"🌐 Meluncurkan biner native: {browser_bin} dengan {len(ext_paths)} ekstensi")
-    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=1)
     logger.info(f"Browser native berhasil berjalan (PID: {proc.pid})")
 
     screenshot_file = os.path.expanduser("~/workspace/last_screenshot.png")
@@ -273,20 +286,21 @@ def run_native_browser(target_url: str):
     except Exception:
         pass
 
+    import threading
+
     def capture_loop():
         time.sleep(3)
         while proc.poll() is None:
             try:
                 if shutil.which("scrot"):
-                    subprocess.run(["scrot", "-o", screenshot_file], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.run(["scrot", "-z", "-o", screenshot_file], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 else:
                     try:
                         import mss
-                        with mss.mss(display=":99") as sct:
-                            sct.shot(output=screenshot_file)
+                        with mss.mss() as sct:
+                            sct.shot(mon=1, output=screenshot_file)
                     except Exception:
-                        if shutil.which("import"):
-                            subprocess.run(["import", "-window", "root", screenshot_file], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        pass
 
                 with open(status_file, "w") as sf:
                     json.dump({
@@ -301,23 +315,29 @@ def run_native_browser(target_url: str):
                 pass
             time.sleep(3)
 
-    import threading
     t_cap = threading.Thread(target=capture_loop, daemon=True)
     t_cap.start()
 
-    act_log = os.path.expanduser("~/workspace/browser_activity.log")
-    for raw_line in proc.stderr:
-        try:
-            line = raw_line.decode("utf-8", errors="replace").strip()
-            if any(k in line for k in ["CONSOLE", "[content.js]", "[CONFIRM]", "[AUTO-CLICK]", "[CHECK]", "[DETECT]", "[CANVAS]", "[TILES]", "[STRATEGY]", "AuthTokenMonitor", "login_submitted"]):
-                clean = line
-                if "CONSOLE(" in line:
-                    clean = line.split("CONSOLE(", 1)[1].split(")]", 1)[-1].strip().strip('"')
-                with open(act_log, "a", encoding="utf-8") as f:
-                    f.write(f"[{time.strftime('%H:%M:%S')}] [EXT] {clean[:300]}
-")
-        except Exception:
-            pass
+    def log_loop():
+        act_log = os.path.expanduser("~/workspace/browser_activity.log")
+        while proc.poll() is None:
+            raw_line = proc.stderr.readline()
+            if not raw_line:
+                time.sleep(0.05)
+                continue
+            try:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if any(k in line for k in ["CONSOLE", "[content.js]", "[CONFIRM]", "[AUTO-CLICK]", "[CHECK]", "[DETECT]", "[CANVAS]", "[TILES]", "[STRATEGY]", "AuthTokenMonitor", "login_submitted", "verify", "captcha", "Captcha", "403"]):
+                    clean = line
+                    if "CONSOLE(" in line:
+                        clean = line.split("CONSOLE(", 1)[1].split(")]", 1)[-1].strip().strip('"')
+                    with open(act_log, "a", encoding="utf-8") as f:
+                        f.write(f"[{time.strftime('%H:%M:%S')}] [EXT] {clean[:300]}\n")
+            except Exception:
+                pass
+
+    t_log = threading.Thread(target=log_loop, daemon=True)
+    t_log.start()
 
     proc.wait()
 

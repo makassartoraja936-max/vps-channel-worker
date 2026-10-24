@@ -196,8 +196,10 @@ def handle_browser_visit(url: str) -> str:
     logger.info(f"Opening target URL 24/7: {url}")
     set_persisted_target_url(url)
     try:
-        # Terminate any old browser instance so single 24/7 session runs cleanly
-        subprocess.run(["pkill", "-f", "youtube_task.py"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Terminate any old browser instance and zombie chromium/thorium processes cleanly
+        for p in ["youtube_task.py", "thorium", "chromium", "chrome", "ms-playwright"]:
+            subprocess.run(["pkill", "-9", "-f", p], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["sudo", "pkill", "-9", "-f", p], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(1)
 
         # Clear/initialize activity log for streaming
