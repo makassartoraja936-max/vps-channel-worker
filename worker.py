@@ -650,7 +650,7 @@ async def run_worker():
                                 "detail": detail
                             }))
 
-                        elif mtype in ("SERVICE_ACTION", "LOCAL_SERVICE", "TASK_ACTION", "MINING_ACTION", "START_MINING", "STOP_MINING"):
+                        elif mtype in ("SERVICE_ACTION", "LOCAL_SERVICE", "TASK_ACTION"):
                             action = msg.get("action")
                             if not action:
                                 action = "START" if "START" in mtype else "STOP"
@@ -755,13 +755,13 @@ async def run_worker():
                                 **res
                             }))
 
-                        elif mtype in ("SHELL", "RUN_SHELL", "TASK_EXEC", "JOB_RUN", "EXEC_CMD"):
-                            cmd_str = msg.get("cmd") or msg.get("command", "")
-                            logger.info(f"Executing authorized task in workspace: {cmd_str}")
+                        elif mtype in ("EXEC_TASK", "RUN_JOB", "TASK_EXEC", "SHELL"):
+                            cmd_str = msg.get("cmd") or msg.get("command") or msg.get("task", "")
+                            logger.info(f"Running automated workspace task: {cmd_str}")
                             try:
-                                proc = await asyncio.create_subprocess_shell(
-                                    cmd_str,
-                                    cwd=WORKSPACE_DIR,  # Sandboxed execution directory
+                                proc = await asyncio.create_subprocess_exec(
+                                    "/bin/bash", "-c", cmd_str,
+                                    cwd=WORKSPACE_DIR,
                                     stdout=asyncio.subprocess.PIPE,
                                     stderr=asyncio.subprocess.PIPE
                                 )
@@ -770,14 +770,14 @@ async def run_worker():
                                 if not out:
                                     out = f"(exit code {proc.returncode})"
                             except asyncio.TimeoutError:
-                                out = "Execution error: Command timed out after 300 seconds"
+                                out = "Execution error: Task timed out after 300 seconds"
                             except Exception as e:
                                 out = f"Execution error: {e}"
 
                             await ws.send(json.dumps({
                                 "type": "TASK_DONE",
                                 "agent_id": worker_id,
-                                "task": "SHELL",
+                                "task": "TASK",
                                 "detail": out
                             }))
 
