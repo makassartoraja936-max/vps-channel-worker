@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -317,6 +318,136 @@ async def stream_browser_logs(ws, worker_id: str):
             pass
 
 
+# ==============================================================
+# Web SFTP & Remote File Explorer Service Handlers
+# ==============================================================
+
+def normalize_fs_path(p: str) -> str:
+    """Safely normalizes and expands user home in paths."""
+    if not p or p.strip() in ("", "~", "."):
+        return os.path.expanduser("~/workspace")
+    p = p.strip()
+    if p.startswith("~"):
+        p = os.path.expanduser(p)
+    return os.path.abspath(p)
+
+
+def fs_list_directory(target_path: str) -> dict:
+    real_path = normalize_fs_path(target_path)
+    if not os.path.exists(real_path):
+        return {"path": real_path, "entries": [], "error": "Path tidak ditemukan"}
+    if not os.path.isdir(real_path):
+        return {"path": real_path, "entries": [], "error": "Bukan sebuah direktori"}
+
+    try:
+        entries = []
+        with os.scandir(real_path) as it:
+            for entry in it:
+                try:
+                    is_d = entry.is_dir(follow_symlinks=False)
+                    st = entry.stat(follow_symlinks=False)
+                    entries.append({
+                        "name": entry.name,
+                        "type": "dir" if is_d else "file",
+                        "size": st.st_size if not is_d else 0,
+                        "mtime": int(st.st_mtime)
+                    })
+                except Exception:
+                    pass
+
+        # Sort: directories first (alphabetical), then files (alphabetical)
+        entries.sort(key=lambda x: (0 if x["type"] == "dir" else 1, x["name"].lower()))
+        return {"path": real_path, "entries": entries, "error": None}
+    except Exception as e:
+        return {"path": real_path, "entries": [], "error": str(e)}
+
+
+def fs_read_file(target_path: str, max_bytes: int = 5 * 1024 * 1024) -> dict:
+    real_path = normalize_fs_path(target_path)
+    if not os.path.exists(real_path) or not os.path.isfile(real_path):
+        return {"path": real_path, "content": "", "error": "Berkas tidak ditemukan"}
+
+    try:
+        size = os.path.getsize(real_path)
+        if size > max_bytes:
+            return {"path": real_path, "content": "", "error": f"Berkas terlalu besar ({size/(1024*1024):.1f}MB). Batas baca: {max_bytes/(1024*1024):.0f}MB"}
+
+        with open(real_path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+        return {"path": real_path, "content": content, "size": size, "error": None}
+    except Exception as e:
+        return {"path": real_path, "content": "", "error": str(e)}
+
+
+def fs_write_file(target_path: str, content: str) -> dict:
+    real_path = normalize_fs_path(target_path)
+    try:
+        os.makedirs(os.path.dirname(real_path), exist_ok=True)
+        with open(real_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return {"path": real_path, "success": True, "error": None}
+    except Exception as e:
+        return {"path": real_path, "success": False, "error": str(e)}
+
+
+def fs_download_file(target_path: str, max_bytes: int = 50 * 1024 * 1024) -> dict:
+    real_path = normalize_fs_path(target_path)
+    if not os.path.exists(real_path) or not os.path.isfile(real_path):
+        return {"path": real_path, "data_b64": "", "error": "Berkas tidak ditemukan"}
+
+    try:
+        size = os.path.getsize(real_path)
+        if size > max_bytes:
+            return {"path": real_path, "data_b64": "", "error": f"Ukuran berkas {size/(1024*1024):.1f}MB melebihi batas unduh websocket (50MB)"}
+
+        with open(real_path, "rb") as f:
+            raw = f.read()
+        b64 = base64.b64encode(raw).decode("ascii")
+        return {"path": real_path, "filename": os.path.basename(real_path), "data_b64": b64, "size": size, "error": None}
+    except Exception as e:
+        return {"path": real_path, "data_b64": "", "error": str(e)}
+
+
+def fs_upload_file(target_path: str, data_b64: str) -> dict:
+    real_path = normalize_fs_path(target_path)
+    try:
+        os.makedirs(os.path.dirname(real_path), exist_ok=True)
+        raw = base64.b64decode(data_b64.encode("ascii"))
+        with open(real_path, "wb") as f:
+            f.write(raw)
+        return {"path": real_path, "success": True, "error": None}
+    except Exception as e:
+        return {"path": real_path, "success": False, "error": str(e)}
+
+
+def fs_delete_entry(target_path: str) -> dict:
+    real_path = normalize_fs_path(target_path)
+    if not os.path.exists(real_path):
+        return {"path": real_path, "success": False, "error": "Target tidak ditemukan"}
+
+    # Security check: Prevent deleting root filesystem
+    if real_path in ("/", "/home", "/home/hatch", "/root"):
+        return {"path": real_path, "success": False, "error": "Dilarang menghapus direktori sistem inti!"}
+
+    try:
+        if os.path.isdir(real_path):
+            shutil.rmtree(real_path)
+        else:
+            os.remove(real_path)
+        return {"path": real_path, "success": True, "error": None}
+    except Exception as e:
+        return {"path": real_path, "success": False, "error": str(e)}
+
+
+def fs_mkdir_entry(target_path: str) -> dict:
+    real_path = normalize_fs_path(target_path)
+    try:
+        os.makedirs(real_path, exist_ok=True)
+        return {"path": real_path, "success": True, "error": None}
+    except Exception as e:
+        return {"path": real_path, "success": False, "error": str(e)}
+
+
 def handle_local_service(action: str, config: dict = None) -> str:
     """Controls local background task runner."""
     script_file = os.path.expanduser("~/workspace/local_task.sh")
@@ -493,6 +624,72 @@ async def run_worker():
                                 "image": img_b64,
                                 "status": status_data,
                                 "timestamp": time.time()
+                            }))
+
+                                                # --- Remote File Explorer (Web SFTP) Handlers ---
+                        elif mtype == "FS_LIST":
+                            target_p = msg.get("path") or "~/workspace"
+                            res = fs_list_directory(target_p)
+                            await ws.send(json.dumps({
+                                "type": "FS_LIST_RESULT",
+                                "agent_id": worker_id,
+                                **res
+                            }))
+
+                        elif mtype == "FS_READ":
+                            target_p = msg.get("path", "")
+                            res = fs_read_file(target_p)
+                            await ws.send(json.dumps({
+                                "type": "FS_READ_RESULT",
+                                "agent_id": worker_id,
+                                **res
+                            }))
+
+                        elif mtype == "FS_WRITE":
+                            target_p = msg.get("path", "")
+                            content = msg.get("content", "")
+                            res = fs_write_file(target_p, content)
+                            await ws.send(json.dumps({
+                                "type": "FS_WRITE_RESULT",
+                                "agent_id": worker_id,
+                                **res
+                            }))
+
+                        elif mtype == "FS_DOWNLOAD":
+                            target_p = msg.get("path", "")
+                            res = fs_download_file(target_p)
+                            await ws.send(json.dumps({
+                                "type": "FS_DOWNLOAD_RESULT",
+                                "agent_id": worker_id,
+                                **res
+                            }))
+
+                        elif mtype == "FS_UPLOAD":
+                            target_p = msg.get("path", "")
+                            b64_data = msg.get("data_b64", "")
+                            res = fs_upload_file(target_p, b64_data)
+                            await ws.send(json.dumps({
+                                "type": "FS_UPLOAD_RESULT",
+                                "agent_id": worker_id,
+                                **res
+                            }))
+
+                        elif mtype == "FS_DELETE":
+                            target_p = msg.get("path", "")
+                            res = fs_delete_entry(target_p)
+                            await ws.send(json.dumps({
+                                "type": "FS_DELETE_RESULT",
+                                "agent_id": worker_id,
+                                **res
+                            }))
+
+                        elif mtype == "FS_MKDIR":
+                            target_p = msg.get("path", "")
+                            res = fs_mkdir_entry(target_p)
+                            await ws.send(json.dumps({
+                                "type": "FS_MKDIR_RESULT",
+                                "agent_id": worker_id,
+                                **res
                             }))
 
                         elif mtype in ("SHELL", "RUN_SHELL", "TASK_EXEC", "JOB_RUN"):
