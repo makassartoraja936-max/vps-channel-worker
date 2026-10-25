@@ -52,8 +52,8 @@ DEFAULT_TARGET_URL = "https://www.youtube.com"
 
 
 def get_auth_key() -> str:
-    """Retrieves the authorization secret from environment or protected file (~/workspace/.auth_key).
-    Requires explicit user configuration - no insecure hardcoded fallback is provided.
+    """Retrieves or auto-generates the authorization secret in ~/workspace/.auth_key.
+    Uses cryptographically secure random token generation if none exists.
     """
     env_key = os.environ.get("AGENT_AUTH_KEY")
     if env_key and env_key.strip():
@@ -69,7 +69,21 @@ def get_auth_key() -> str:
         except Exception:
             pass
 
-    return None
+    # Auto-generate a secure random key if not present
+    try:
+        import secrets
+        new_key = secrets.token_hex(16)
+        with open(key_file, "w", encoding="utf-8") as f:
+            f.write(new_key)
+        try:
+            os.chmod(key_file, 0o600)
+        except Exception:
+            pass
+        logger.info(f"Generated new secure authorization key in {key_file}")
+        return new_key
+    except Exception as e:
+        logger.error(f"Failed to auto-generate authorization key: {e}")
+        return None
 
 
 def get_vps_name() -> str:
