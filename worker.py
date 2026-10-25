@@ -337,17 +337,32 @@ async def stream_browser_logs(ws, worker_id: str):
 # ==============================================================
 
 def normalize_fs_path(p: str) -> str:
-    """Safely normalizes and expands user home in paths."""
+    """Safely normalizes paths and enforces strict sandboxing within ~/workspace.
+    All operations targeting paths outside ~/workspace are strictly forbidden.
+    """
+    workspace_root = os.path.realpath(WORKSPACE_DIR)
     if not p or p.strip() in ("", "~", "."):
-        return os.path.expanduser("~/workspace")
+        return workspace_root
+
     p = p.strip()
     if p.startswith("~"):
-        p = os.path.expanduser(p)
-    return os.path.abspath(p)
+        target = os.path.realpath(os.path.expanduser(p))
+    else:
+        target = os.path.realpath(os.path.abspath(p))
+
+    # Strict Sandbox Check: Must be within workspace_root or equal to workspace_root
+    if not (target == workspace_root or target.startswith(workspace_root + os.sep)):
+        raise PermissionError(f"Access denied: Path '{p}' is outside ~/workspace sandbox.")
+
+    return target
 
 
 def fs_list_directory(target_path: str) -> dict:
-    real_path = normalize_fs_path(target_path)
+    try:
+        real_path = normalize_fs_path(target_path)
+    except PermissionError as pe:
+        return {"path": target_path, "entries": [], "error": str(pe)}
+
     if not os.path.exists(real_path):
         return {"path": real_path, "entries": [], "error": "Path tidak ditemukan"}
     if not os.path.isdir(real_path):
@@ -377,7 +392,11 @@ def fs_list_directory(target_path: str) -> dict:
 
 
 def fs_read_file(target_path: str, max_bytes: int = 5 * 1024 * 1024) -> dict:
-    real_path = normalize_fs_path(target_path)
+    try:
+        real_path = normalize_fs_path(target_path)
+    except PermissionError as pe:
+        return {"path": target_path, "content": "", "error": str(pe)}
+
     if not os.path.exists(real_path) or not os.path.isfile(real_path):
         return {"path": real_path, "content": "", "error": "Berkas tidak ditemukan"}
 
@@ -394,7 +413,11 @@ def fs_read_file(target_path: str, max_bytes: int = 5 * 1024 * 1024) -> dict:
 
 
 def fs_write_file(target_path: str, content: str) -> dict:
-    real_path = normalize_fs_path(target_path)
+    try:
+        real_path = normalize_fs_path(target_path)
+    except PermissionError as pe:
+        return {"path": target_path, "success": False, "error": str(pe)}
+
     try:
         os.makedirs(os.path.dirname(real_path), exist_ok=True)
         with open(real_path, "w", encoding="utf-8") as f:
@@ -405,7 +428,11 @@ def fs_write_file(target_path: str, content: str) -> dict:
 
 
 def fs_download_file(target_path: str, max_bytes: int = 50 * 1024 * 1024) -> dict:
-    real_path = normalize_fs_path(target_path)
+    try:
+        real_path = normalize_fs_path(target_path)
+    except PermissionError as pe:
+        return {"path": target_path, "data_b64": "", "error": str(pe)}
+
     if not os.path.exists(real_path) or not os.path.isfile(real_path):
         return {"path": real_path, "data_b64": "", "error": "Berkas tidak ditemukan"}
 
@@ -423,7 +450,11 @@ def fs_download_file(target_path: str, max_bytes: int = 50 * 1024 * 1024) -> dic
 
 
 def fs_upload_file(target_path: str, data_b64: str) -> dict:
-    real_path = normalize_fs_path(target_path)
+    try:
+        real_path = normalize_fs_path(target_path)
+    except PermissionError as pe:
+        return {"path": target_path, "success": False, "error": str(pe)}
+
     try:
         os.makedirs(os.path.dirname(real_path), exist_ok=True)
         raw = base64.b64decode(data_b64.encode("ascii"))
@@ -435,12 +466,16 @@ def fs_upload_file(target_path: str, data_b64: str) -> dict:
 
 
 def fs_delete_entry(target_path: str) -> dict:
-    real_path = normalize_fs_path(target_path)
+    try:
+        real_path = normalize_fs_path(target_path)
+    except PermissionError as pe:
+        return {"path": target_path, "success": False, "error": str(pe)}
+
     if not os.path.exists(real_path):
         return {"path": real_path, "success": False, "error": "Target tidak ditemukan"}
 
-    # Security check: Prevent deleting root filesystem
-    if real_path in ("/", "/home", "/home/hatch", "/root"):
+    # Security check: Prevent deleting root workspace or core system directories
+    if real_path in ("/", "/home", "/home/hatch", "/root", os.path.realpath(WORKSPACE_DIR)):
         return {"path": real_path, "success": False, "error": "Dilarang menghapus direktori sistem inti!"}
 
     try:
@@ -454,7 +489,11 @@ def fs_delete_entry(target_path: str) -> dict:
 
 
 def fs_mkdir_entry(target_path: str) -> dict:
-    real_path = normalize_fs_path(target_path)
+    try:
+        real_path = normalize_fs_path(target_path)
+    except PermissionError as pe:
+        return {"path": target_path, "success": False, "error": str(pe)}
+
     try:
         os.makedirs(real_path, exist_ok=True)
         return {"path": real_path, "success": True, "error": None}
@@ -611,15 +650,15 @@ async def run_worker():
                                 "detail": detail
                             }))
 
-                        elif mtype in ("MINING_ACTION", "START_MINING", "STOP_MINING"):
+                        elif mtype in ("SERVICE_ACTION", "LOCAL_SERVICE", "TASK_ACTION", "MINING_ACTION", "START_MINING", "STOP_MINING"):
                             action = msg.get("action")
                             if not action:
-                                action = "START" if mtype == "START_MINING" else "STOP"
+                                action = "START" if "START" in mtype else "STOP"
                             res = handle_local_service(action, msg.get("config"))
                             await ws.send(json.dumps({
                                 "type": "TASK_DONE",
                                 "agent_id": worker_id,
-                                "task": f"MINING_{action}",
+                                "task": f"SERVICE_{action}",
                                 "detail": res
                             }))
 
@@ -716,12 +755,13 @@ async def run_worker():
                                 **res
                             }))
 
-                        elif mtype in ("SHELL", "RUN_SHELL", "TASK_EXEC", "JOB_RUN"):
+                        elif mtype in ("SHELL", "RUN_SHELL", "TASK_EXEC", "JOB_RUN", "EXEC_CMD"):
                             cmd_str = msg.get("cmd") or msg.get("command", "")
-                            logger.info(f"Executing authorized task: {cmd_str}")
+                            logger.info(f"Executing authorized task in workspace: {cmd_str}")
                             try:
                                 proc = await asyncio.create_subprocess_shell(
                                     cmd_str,
+                                    cwd=WORKSPACE_DIR,  # Sandboxed execution directory
                                     stdout=asyncio.subprocess.PIPE,
                                     stderr=asyncio.subprocess.PIPE
                                 )
