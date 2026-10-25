@@ -15,10 +15,12 @@ import base64
 import json
 import logging
 import os
+import re
 import socket
 import subprocess
 import sys
 import time
+import uuid
 
 try:
     import websockets
@@ -72,28 +74,48 @@ def get_auth_key() -> str:
 def get_vps_name() -> str:
     if os.path.exists(VPS_NAME_FILE):
         try:
-            with open(VPS_NAME_FILE, "r") as f:
+            with open(VPS_NAME_FILE, "r", encoding="utf-8") as f:
                 name = f.read().strip()
                 if name:
                     return name
         except Exception:
             pass
+    # Fallback to hostname with worker suffix
+    wid = get_worker_id()
+    if wid.startswith("worker-"):
+        return wid.replace("worker-", "").title()
     return socket.gethostname()
 
 
 def get_worker_id() -> str:
     if os.path.exists(AGENT_ID_FILE):
         try:
-            with open(AGENT_ID_FILE, "r") as f:
+            with open(AGENT_ID_FILE, "r", encoding="utf-8") as f:
                 wid = f.read().strip()
                 if wid:
                     return wid
         except Exception:
             pass
-    # Generate stable ID based on hostname
-    wid = f"worker-{socket.gethostname()}"
+
+    # Priority 1: Derive unique ID from configured .vps_name (e.g., Muse-02 -> worker-muse-02)
+    if os.path.exists(VPS_NAME_FILE):
+        try:
+            with open(VPS_NAME_FILE, "r", encoding="utf-8") as f:
+                vname = f.read().strip()
+                if vname:
+                    clean_id = re.sub(r"[^a-zA-Z0-9_-]", "-", vname).strip("-").lower()
+                    wid = f"worker-{clean_id}"
+                    with open(AGENT_ID_FILE, "w", encoding="utf-8") as f:
+                        f.write(wid)
+                    return wid
+        except Exception:
+            pass
+
+    # Priority 2: Unique random ID so identical hostnames (like htch-runtime) never collide!
+    unique_suffix = uuid.uuid4().hex[:6]
+    wid = f"worker-{socket.gethostname()}-{unique_suffix}"
     try:
-        with open(AGENT_ID_FILE, "w") as f:
+        with open(AGENT_ID_FILE, "w", encoding="utf-8") as f:
             f.write(wid)
     except Exception:
         pass
