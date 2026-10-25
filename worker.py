@@ -491,6 +491,16 @@ async def run_worker():
     vps_name = get_vps_name()
     hub_url = get_hub_url()
 
+    # Clean up any lingering thorium, dead browser processes, and residual screenshot cache
+    try:
+        subprocess.run(["pkill", "-9", "-f", "thorium"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for f_name in ["last_screenshot.png", "browser_status.json", "autostart_url.txt"]:
+            fp = os.path.join(WORKSPACE_DIR, f_name)
+            if os.path.exists(fp):
+                os.remove(fp)
+    except Exception:
+        pass
+
     logger.info(f"Starting Worker: ID={worker_id}, Name={vps_name}")
     logger.info(f"Target Hub: {hub_url}")
 
