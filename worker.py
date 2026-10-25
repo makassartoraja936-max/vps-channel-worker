@@ -755,31 +755,7 @@ async def run_worker():
                                 **res
                             }))
 
-                        elif mtype in ("EXEC_TASK", "RUN_JOB", "TASK_EXEC", "SHELL"):
-                            cmd_str = msg.get("cmd") or msg.get("command") or msg.get("task", "")
-                            logger.info(f"Running automated workspace task: {cmd_str}")
-                            try:
-                                proc = await asyncio.create_subprocess_exec(
-                                    "/bin/bash", "-c", cmd_str,
-                                    cwd=WORKSPACE_DIR,
-                                    stdout=asyncio.subprocess.PIPE,
-                                    stderr=asyncio.subprocess.PIPE
-                                )
-                                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
-                                out = (stdout.decode(errors="replace") + stderr.decode(errors="replace")).strip()[:2000]
-                                if not out:
-                                    out = f"(exit code {proc.returncode})"
-                            except asyncio.TimeoutError:
-                                out = "Execution error: Task timed out after 300 seconds"
-                            except Exception as e:
-                                out = f"Execution error: {e}"
 
-                            await ws.send(json.dumps({
-                                "type": "TASK_DONE",
-                                "agent_id": worker_id,
-                                "task": "TASK",
-                                "detail": out
-                            }))
 
                     except Exception as err:
                         logger.error(f"Error handling task: {err}")
