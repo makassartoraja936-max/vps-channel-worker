@@ -297,7 +297,7 @@ class MiningSupervisor:
         try:
             res = subprocess.run(["pgrep", "-f", "gasdag"], stdout=subprocess.PIPE, text=True)
             pids = [p.strip() for p in res.stdout.strip().splitlines() if p.strip()]
-            return len(pids) > 0 and (os.path.exists(MINING_CONF_FILE) or self.active_process is not None)
+            return len(pids) > 0
         except Exception:
             return False
 
