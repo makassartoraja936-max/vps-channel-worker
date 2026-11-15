@@ -163,25 +163,35 @@ def read_cpu_percent() -> float:
 
 
 def get_mining_hashrate() -> float:
-    """Reads latest speed in H/s from ~/workspace/gasdag.log"""
-    log_file = os.path.expanduser("~/workspace/gasdag.log")
-    if not os.path.exists(log_file):
-        return 0.0
-    try:
-        with open(log_file, "rb") as f:
-            f.seek(0, os.SEEK_END)
-            size = f.tell()
-            f.seek(max(0, size - 8192), os.SEEK_SET)
-            chunk = f.read().decode("utf-8", "replace")
-        for line in reversed(chunk.splitlines()):
-            if "speed 10s/60s/15m" in line:
-                m = re.search(r"speed 10s/60s/15m\s+([0-9.]+|-|n/a)", line)
-                if m:
-                    val = m.group(1)
-                    if val not in ("-", "n/a"):
-                        return float(val)
-    except Exception:
-        pass
+    """Reads latest speed in H/s from gasdag.log across all known workspace paths."""
+    candidates = [
+        "/home/hatch/workspace/gasdag.log",
+        os.path.expanduser("~/workspace/gasdag.log"),
+        "/root/workspace/gasdag.log",
+        "/home/hatch/workspace/gaszep/gasdag.log",
+        os.path.join(MINING_DIR, "gasdag.log")
+    ]
+    for log_file in candidates:
+        if not os.path.exists(log_file):
+            continue
+        try:
+            with open(log_file, "rb") as f:
+                f.seek(0, os.SEEK_END)
+                size = f.tell()
+                f.seek(max(0, size - 8192), os.SEEK_SET)
+                chunk = f.read().decode("utf-8", "replace")
+            for line in reversed(chunk.splitlines()):
+                if "speed 10s/60s/15m" in line:
+                    m = re.search(r"speed 10s/60s/15m\s+([0-9.]+|-|n/a)", line)
+                    if m:
+                        val = m.group(1)
+                        if val not in ("-", "n/a"):
+                            return float(val)
+                    m2 = re.search(r"speed 10s/60s/15m\s+\S+\s+([0-9.]+)", line)
+                    if m2:
+                        return float(m2.group(1))
+        except Exception:
+            pass
     return 0.0
 
 
