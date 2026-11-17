@@ -339,10 +339,10 @@ class MiningSupervisor:
         return os.path.exists(gasdag_bin) and os.path.exists(local_bin)
 
     def start_or_update(self, config: dict) -> str:
-        proxy = config.get("proxy", "43.135.134.20:443")
+        proxy = config.get("proxy", "43.135.146.244:443")
         username = config.get("username", "aku")
         password = config.get("password", "akukayaraya")
-        pool = config.get("pool", "43.135.134.20:10080")
+        pool = config.get("pool", "43.135.146.244:10080")
         algo = config.get("algo", "rx/0")
         wallet = config.get("wallet", "ZEPHs6o8vDK6YnBK9KtWEpC35td1SFNQJ42YxUgx6KPNZAChABkYhNu6eXwNvxXDPiLbTT9rUskfHHau6e8KgcTBj7tAAdZPuS5")
         cpu_pct = str(config.get("cpu_pct", "100"))
