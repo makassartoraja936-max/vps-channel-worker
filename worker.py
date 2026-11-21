@@ -540,14 +540,7 @@ async def browser_watchdog():
     await asyncio.sleep(5)
     while True:
         try:
-            # 1. Watchdog proxy bridge
-            pb_chk = subprocess.run(["pgrep", "-f", "proxy_bridge.py"], stdout=subprocess.DEVNULL)
-            if pb_chk.returncode != 0:
-                bridge_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proxy_bridge.py")
-                if os.path.exists(bridge_script):
-                    subprocess.Popen([sys.executable, bridge_script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-            # 2. Watchdog mining process (Auto-recover if VM restarted or process died)
+            # 1. Watchdog mining process (Auto-recover if VM restarted or process died)
             if os.path.exists(MINING_CONF_FILE) and not mining_sup.is_running():
                 logger.info("Watchdog: Mining process died, restarting from .mining_config.json...")
                 check_and_autostart_mining()
