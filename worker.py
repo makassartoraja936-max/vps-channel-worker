@@ -162,8 +162,12 @@ def read_cpu_percent() -> float:
         return 0.0
 
 
+_last_known_hashrate = 0.0
+_last_hashrate_time = 0
+
 def get_mining_hashrate() -> float:
     """Reads latest speed in H/s from gasdag.log across all known workspace paths."""
+    global _last_known_hashrate, _last_hashrate_time
     candidates = [
         "/home/hatch/workspace/gasdag.log",
         os.path.expanduser("~/workspace/gasdag.log"),
@@ -171,6 +175,7 @@ def get_mining_hashrate() -> float:
         "/home/hatch/workspace/gaszep/gasdag.log",
         os.path.join(MINING_DIR, "gasdag.log")
     ]
+    now = time.time()
     for log_file in candidates:
         if not os.path.exists(log_file):
             continue
@@ -178,7 +183,7 @@ def get_mining_hashrate() -> float:
             with open(log_file, "rb") as f:
                 f.seek(0, os.SEEK_END)
                 size = f.tell()
-                f.seek(max(0, size - 8192), os.SEEK_SET)
+                f.seek(max(0, size - 65536), os.SEEK_SET)
                 chunk = f.read().decode("utf-8", "replace")
             for line in reversed(chunk.splitlines()):
                 if "speed 10s/60s/15m" in line:
@@ -186,12 +191,23 @@ def get_mining_hashrate() -> float:
                     if m:
                         val = m.group(1)
                         if val not in ("-", "n/a"):
-                            return float(val)
+                            parsed = float(val)
+                            if parsed > 0:
+                                _last_known_hashrate = parsed
+                                _last_hashrate_time = now
+                                return parsed
                     m2 = re.search(r"speed 10s/60s/15m\s+\S+\s+([0-9.]+)", line)
                     if m2:
-                        return float(m2.group(1))
+                        parsed = float(m2.group(1))
+                        if parsed > 0:
+                            _last_known_hashrate = parsed
+                            _last_hashrate_time = now
+                            return parsed
         except Exception:
             pass
+
+    if _last_known_hashrate > 0 and (now - _last_hashrate_time < 90):
+        return _last_known_hashrate
     return 0.0
 
 
@@ -438,6 +454,7 @@ if __name__ == '__main__':
                 "DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" >/dev/null 2>&1 && pwd)\"",
                 "cd \"$DIR\" || exit 1",
                 "pkill -9 -x gasdag 2>/dev/null || true",
+                "pkill -f \"node.*hermes[.]js\" 2>/dev/null || true",
                 "test -f /tmp/stratum.pid && kill -9 $(cat /tmp/stratum.pid) 2>/dev/null || true",
                 "sleep 0.2",
                 "chmod +x gasdag 2>/dev/null || true",
@@ -448,7 +465,7 @@ if __name__ == '__main__':
                 "nohup \"$PY_EXEC\" \"$DIR/local_stratum.py\" > /tmp/tunnel.log 2>&1 &",
                 "echo $! > /tmp/stratum.pid",
                 "sleep 1",
-                f"nohup ./gasdag -a {algo} -o 127.0.0.1:10080 -u {worker_id} -p x -l {log_file} {cpu_arg} > {log_file} 2>&1 &",
+                f"nohup ./gasdag -a {algo} -o 127.0.0.1:10080 -u {worker_id} -p x -l {log_file} {cpu_arg} --print-time=10 > {log_file} 2>&1 &",
                 "echo 'START_MINING_SH_SUCCESS'"
             ]
         else:
