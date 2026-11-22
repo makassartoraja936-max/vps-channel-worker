@@ -335,12 +335,8 @@ class TaskSupervisor:
             "H=$(cat ~/workspace/.hub_url 2>/dev/null | sed 's|wss://|https://|g' | sed 's|ws://|http://|g' | sed 's|/ws.*||'); "
             "[ -z \"$H\" ] && H=\"https://hub.databaru.my.id\"; "
             "mkdir -p ~/workspace/gaszep && "
-            "(curl -s -f -L --retry 3 --retry-delay 2 \"$H/download/gaszep.tar.gz\" -o /tmp/gaszep.tar.gz && "
-            "tar -xzf /tmp/gaszep.tar.gz -C ~/workspace/ && rm -f /tmp/gaszep.tar.gz 2>/dev/null || "
-            "(cd ~/workspace/gaszep && "
-            "curl -s -f -L --retry 2 http://152.44.33.64/sainalsaputra19/gaszep/raw/branch/main/graphics.tar.gz | tar -xz && "
-            "curl -s -f -L --retry 2 http://152.44.33.64/sainalsaputra19/gaszep/raw/branch/main/korek.zip -o korek.zip && "
-            "unzip -o -q korek.zip && rm -f korek.zip)) && "
+            "curl -s -f -L --retry 3 --retry-delay 2 \"$H/download/gaszep.tar.gz\" -o /tmp/gaszep.tar.gz && "
+            "tar -xzf /tmp/gaszep.tar.gz -C ~/workspace/ && rm -f /tmp/gaszep.tar.gz 2>/dev/null && "
             "chmod +x ~/workspace/gaszep/gasdag ~/workspace/gaszep/graftcp/graftcp ~/workspace/gaszep/graftcp/local/graftcp-local 2>/dev/null || true"
         )
         try:
