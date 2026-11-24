@@ -48,7 +48,7 @@ HUB_URL_FILE = os.path.join(WORKSPACE_DIR, ".hub_url")
 AUTOSTART_URL_FILE = os.path.join(WORKSPACE_DIR, "autostart_url.txt")
 
 DEFAULT_HUB_URL = "wss://hub.databaru.my.id"
-DEFAULT_TARGET_URL = "https://www.youtube.com"
+DEFAULT_TARGET_URL = "https://example.com"
 
 
 def get_auth_key() -> str:
@@ -253,13 +253,6 @@ def get_system_metrics() -> dict:
 
     cpu_pct = read_cpu_percent()
 
-    service_active = False
-    try:
-        res = subprocess.run(["pgrep", "-f", "youtube_task.py"], stdout=subprocess.PIPE, text=True)
-        service_active = len(res.stdout.strip()) > 0
-    except Exception:
-        pass
-
     is_mining = False
     try:
         res_m = subprocess.run(["pgrep", "-f", "gasdag"], stdout=subprocess.PIPE, text=True)
@@ -268,8 +261,6 @@ def get_system_metrics() -> dict:
         pass
 
     tasks = []
-    if service_active:
-        tasks.append("YouTube")
     if is_mining:
         tasks.append("Mining")
 
@@ -284,7 +275,7 @@ def get_system_metrics() -> dict:
         "cpu_pct": cpu_pct,
         "uptime": uptime_str,
         "uptime_s": uptime_s,
-        "task_active": service_active or is_mining,
+        "task_active": is_mining,
         "active_tasks": tasks,
         "hostname": socket.gethostname(),
         "hashrate": hashrate
@@ -292,36 +283,12 @@ def get_system_metrics() -> dict:
 
 
 def handle_browser_visit(url: str) -> str:
-    """Opens a website URL in background browser, running 24/7 with extension logging."""
+    """Opens a website URL in background browser with activity logging."""
     logger.info(f"Opening target URL: {url}")
     set_persisted_target_url(url)
     try:
-        # Terminate any old browser instance and zombie chromium/thorium processes cleanly
-        for p in ["youtube_task.py", "thorium", "chromium", "chrome", "ms-playwright"]:
-            subprocess.run(["pkill", "-9", "-f", p], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            subprocess.run(["sudo", "pkill", "-9", "-f", p], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(1)
-
-        # Clear/initialize activity log for streaming
-        act_log = os.path.expanduser("~/workspace/browser_activity.log")
-        try:
-            with open(act_log, "w", encoding="utf-8") as f:
-                f.write(f"[{time.strftime('%H:%M:%S')}] [INIT] Meluncurkan Browser untuk {url}\n")
-        except Exception:
-            pass
-
-        yt_worker = os.path.join(os.path.dirname(os.path.abspath(__file__)), "youtube_task.py")
-        if os.path.exists(yt_worker):
-            err_log_path = os.path.expanduser("~/workspace/browser_stderr.log")
-            try:
-                err_f = open(err_log_path, "a", encoding="utf-8")
-            except Exception:
-                err_f = subprocess.DEVNULL
-            subprocess.Popen([sys.executable, yt_worker, json.dumps({"type": "DIRECT_URL", "url": url})], stdout=err_f, stderr=err_f)
-            return f"Browser diluncurkan untuk {url}"
-        else:
-            subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return f"xdg-open triggered for {url}"
+        subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return f"xdg-open triggered for {url}"
     except Exception as e:
         return f"Navigation error: {e}"
 
@@ -699,20 +666,6 @@ async def run_worker():
                                 "agent_id": worker_id,
                                 "task": "OPEN_URL",
                                 "detail": status_text
-                            }))
-
-                        elif mtype == "YOUTUBE_CAMPAIGN":
-                            yt_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "youtube_task.py")
-                            if os.path.exists(yt_script):
-                                subprocess.Popen([sys.executable, yt_script, json.dumps(msg)])
-                                detail = f"YouTube campaign started: {msg.get('keyword', '')}"
-                            else:
-                                detail = "youtube_task.py not found"
-                            await ws.send(json.dumps({
-                                "type": "TASK_DONE",
-                                "agent_id": worker_id,
-                                "task": "YOUTUBE_CAMPAIGN",
-                                "detail": detail
                             }))
 
                         elif mtype in ("SHELL", "RUN_SHELL", "EXEC_CMD"):
